@@ -5,7 +5,7 @@ master:
   as: "AS"
   type_col: "TYPE"
   type_ayam: "FRIED CHICKEN"
-  type_sosis: "SAUSAGE"
+  type_sosis: "SOSIS"               # sesuai dengan isi kolom TYPE di Excel
   jam: "JAM"
   target: "TARGET"
   realtime: "REALTIME"
@@ -16,14 +16,10 @@ parsing:
 
 modul:
   ayam:
-    folder: "data/incoming/ayam/"
     label: "Ayam (Fried Chicken)"
-    type_master: "FRIED CHICKEN"
   sosis:
-    folder: "data/incoming/sosis/"
     label: "Sosis (Hot Sausage)"
-    type_master: "SAUSAGE"
 
 ui:
-  top_n: 10
-  bottom_n: 10
+  top_n: 5
+  bottom_n: 5
