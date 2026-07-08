@@ -12,7 +12,7 @@ master:
   ach: "ACH"
 
 parsing:
-  pattern: 'TOKO:(?P<kode>[A-Z0-9]{4})-(?P<nama>.+?)\s+\|\s*(?P<qty>\d+)\s*\|\s*(?P<rp>[\d,]+)\s*\|\s*(?P<stock>\d+)'
+  pattern: 'TOKO:(?P<kode>[A-Z0-9]{4})-(?P<nama>[^|]+)\|\s*(?P<qty>\d+)\s*\|\s*(?P<rp>[\d,]+)\s*\|\s*(?P<stock>\d+)'
 
 modul:
   ayam:
