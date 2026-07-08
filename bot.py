@@ -231,7 +231,15 @@ WAITING_AYAM = 2
 # 7. Handlers
 # -------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Selamat datang!\nSilakan kirim file struktur data format **XLSX**.")
+    await update.message.reply_text(
+        "👋 Selamat datang!\n\n"
+        "📌 **Langkah pertama:** unggah file **master toko** dalam format Excel (.xlsx).\n\n"
+        "File master HARUS berisi kolom berikut:\n"
+        "`Kode Toko`, `Nama Toko`, `AM`, `AS`, `TYPE`, `TARGET`, dll.\n\n"
+        "⚠️ **Bukan** file laporan/rekapan (seperti 'REPORT PENCAPAIAN...'), "
+        "melainkan file daftar seluruh toko dengan target penjualan.\n\n"
+        "Silakan kirim file tersebut sekarang."
+    )
     context.user_data.clear()
     return WAITING_MASTER
 
