@@ -45,42 +45,47 @@ BOTTOM_N = config["ui"]["bottom_n"]
 # 2. Helper: baca master & parse teks
 # -------------------------------------------------------------------
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
-    """Baca file master Excel, pastikan kolom wajib ada."""
-    # Baca seluruh data tanpa header untuk mencari baris header
-    df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str)
-    header_row = None
-    for idx, row in df_raw.iterrows():
-        for cell in row:
-            if isinstance(cell, str):
-                cleaned = cell.replace(' ', '').lower()
-                if 'kodetoko' in cleaned:
-                    header_row = idx
-                    break
+    """Baca file master Excel, cari sheet yang mengandung kolom 'Kode Toko'."""
+    xls = pd.ExcelFile(io.BytesIO(file_bytes))
+    sheet_names = xls.sheet_names
+
+    for sheet in sheet_names:
+        # Baca 50 baris pertama tanpa header untuk cek
+        try:
+            df_preview = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=50, dtype=str)
+        except Exception:
+            continue
+        header_row = None
+        for idx, row in df_preview.iterrows():
+            for cell in row:
+                if isinstance(cell, str):
+                    cleaned = cell.replace(' ', '').lower()
+                    if 'kodetoko' in cleaned:
+                        header_row = idx
+                        break
+            if header_row is not None:
+                break
         if header_row is not None:
-            break
-    if header_row is None:
-        preview = df_raw.head(5).to_string(index=False)
-        raise ValueError(
-            f"Kolom 'Kode Toko' tidak ditemukan.\n5 baris pertama:\n{preview}"
-        )
-    # Baca ulang dengan header
-    df = pd.read_excel(io.BytesIO(file_bytes), skiprows=header_row, dtype=str)
-    df.columns = df.columns.str.strip()
+            # Baca sheet ini dengan header yang ditemukan
+            df = pd.read_excel(xls, sheet_name=sheet, skiprows=header_row, dtype=str)
+            df.columns = df.columns.str.strip()
+            # Validasi kolom wajib
+            required = [MASTER_COLS['kode_toko'], MASTER_COLS['am'], MASTER_COLS['as'], MASTER_COLS['type_col']]
+            missing = [col for col in required if col not in df.columns]
+            if not missing:
+                return df
+            else:
+                # Kolom tidak lengkap, lanjut cek sheet lain
+                continue
 
-    # Validasi kolom wajib
-    required = [MASTER_COLS['kode_toko'], MASTER_COLS['am'], MASTER_COLS['as'], MASTER_COLS['type_col']]
-    missing = [col for col in required if col not in df.columns]
-    if missing:
-        cols_found = ', '.join(df.columns.tolist())
-        raise ValueError(
-            f"File bukan master toko yang valid.\n"
-            f"Kolom wajib: {', '.join(required)}\n"
-            f"Kolom yang ditemukan: {cols_found}\n"
-            f"Kolom hilang: {', '.join(missing)}\n"
-            "Silakan upload file master toko yang benar."
-        )
-    return df
-
+    # Jika tidak ada sheet yang cocok, tampilkan pesan jelas
+    raise ValueError(
+        f"Tidak ditemukan sheet yang valid di file Excel.\n"
+        f"Sheet tersedia: {', '.join(sheet_names)}\n"
+        "Pastikan salah satu sheet memiliki header: Kode Toko, AM, AS, TYPE, dll."
+    )
+    
+    
 def parse_laporan_text(content: str):
     """Kembalikan (DataFrame, modul, last_update) atau None."""
     if 'FRIED CHICKEN' in content:
