@@ -45,13 +45,13 @@ BOTTOM_N = config["ui"]["bottom_n"]
 # 2. Helper: baca master & parse teks
 # -------------------------------------------------------------------
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
-    """Baca file Excel, cari baris header yang mengandung 'Kode Toko' (tanpa spasi)."""
+    """Baca file master Excel, pastikan kolom wajib ada."""
+    # Baca seluruh data tanpa header untuk mencari baris header
     df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str)
     header_row = None
     for idx, row in df_raw.iterrows():
         for cell in row:
             if isinstance(cell, str):
-                # Hapus semua spasi, lowercase, lalu cek 'kodetoko'
                 cleaned = cell.replace(' ', '').lower()
                 if 'kodetoko' in cleaned:
                     header_row = idx
@@ -59,12 +59,26 @@ def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
         if header_row is not None:
             break
     if header_row is None:
-        preview = df_raw.head(10).to_string(index=False)
+        preview = df_raw.head(5).to_string(index=False)
         raise ValueError(
-            f"Kolom 'Kode Toko' tidak ditemukan.\n10 baris pertama:\n{preview}"
+            f"Kolom 'Kode Toko' tidak ditemukan.\n5 baris pertama:\n{preview}"
         )
+    # Baca ulang dengan header
     df = pd.read_excel(io.BytesIO(file_bytes), skiprows=header_row, dtype=str)
     df.columns = df.columns.str.strip()
+
+    # Validasi kolom wajib
+    required = [MASTER_COLS['kode_toko'], MASTER_COLS['am'], MASTER_COLS['as'], MASTER_COLS['type_col']]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        cols_found = ', '.join(df.columns.tolist())
+        raise ValueError(
+            f"File bukan master toko yang valid.\n"
+            f"Kolom wajib: {', '.join(required)}\n"
+            f"Kolom yang ditemukan: {cols_found}\n"
+            f"Kolom hilang: {', '.join(missing)}\n"
+            "Silakan upload file master toko yang benar."
+        )
     return df
 
 def parse_laporan_text(content: str):
@@ -238,7 +252,7 @@ async def receive_master(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return WAITING_SOSIS
     except Exception as e:
-        await update.message.reply_text(f"❌ Gagal: {e}\nKirim ulang file XLSX.")
+        await update.message.reply_text(f"❌ Gagal: {e}\nKirim ulang file XLSX yang benar (master toko).")
         return WAITING_MASTER
 
 async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
