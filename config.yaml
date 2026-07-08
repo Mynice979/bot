@@ -1,0 +1,19 @@
+master:
+  kode_toko: "Kode Toko"
+  nama_toko: "Nama Toko"
+  am: "AM"
+  as: "AS"
+  type_col: "TYPE"
+  type_ayam: "FRIED CHICKEN"
+  type_sosis: "SAUSAGE"
+  jam: "JAM"
+  target: "TARGET"
+  realtime: "REALTIME"
+  ach: "ACH"
+
+parsing:
+  pattern: 'TOKO:(?P<kode>[A-Z0-9]{4})-(?P<nama>.+?)\s+\|\s*(?P<qty>\d+)\s*\|\s*(?P<rp>[\d,]+)\s*\|\s*(?P<stock>\d+)'
+
+ui:
+  top_n: 10
+  bottom_n: 10
