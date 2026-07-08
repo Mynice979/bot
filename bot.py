@@ -4,7 +4,7 @@ import re
 import logging
 from io import BytesIO
 from collections import defaultdict
-from typing import Optional, Tuple
+from typing import Optional
 
 import pandas as pd
 import numpy as np
@@ -40,7 +40,7 @@ UI_TOP = config["ui"]["top_n"]
 UI_BOTTOM = config["ui"]["bottom_n"]
 
 # -------------------------------------------------------------------
-# 2. Data loader functions (sebelumnya di src/data_loader.py)
+# 2. Data loader functions
 # -------------------------------------------------------------------
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
     """Baca file master Excel dari bytes, pastikan kolom minimal ada."""
@@ -89,7 +89,7 @@ def parse_laporan_text_from_content(content: str, pattern: str):
 
 
 # -------------------------------------------------------------------
-# 3. Aggregator functions (sebelumnya di src/aggregator.py)
+# 3. Aggregator functions
 # -------------------------------------------------------------------
 def merge_and_calculate(
     master_df: pd.DataFrame,
@@ -102,7 +102,12 @@ def merge_and_calculate(
     modul_type: str,
 ) -> pd.DataFrame:
     """Gabungkan master dengan transaksi, update REALTIME, hitung ACH."""
+    # Cek apakah kolom TYPE ada
+    if type_col not in master_df.columns:
+        raise KeyError(f"Kolom '{type_col}' tidak ditemukan di master. Pastikan file master memiliki kolom TYPE.")
     master_mod = master_df[master_df[type_col] == modul_type].copy()
+    if master_mod.empty:
+        raise ValueError(f"Tidak ada toko dengan TYPE='{modul_type}' di master. Cek isi kolom TYPE.")
     merged = master_mod.merge(trans_df, left_on=kode_col, right_on="Kode", how="left")
 
     # Update REALTIME
@@ -172,7 +177,7 @@ def top_bottom_toko(
 
 
 # -------------------------------------------------------------------
-# 4. User state (sebelumnya di src/user_state.py)
+# 4. User state
 # -------------------------------------------------------------------
 user_data = defaultdict(
     lambda: {
@@ -209,6 +214,7 @@ def get_last_update(chat_id, modul):
 # -------------------------------------------------------------------
 UPLOAD_MASTER = 0
 UPLOAD_REPORT = 1
+INPUT_REPORT_TEXT = 2   # state untuk menerima teks laporan
 
 # -------------------------------------------------------------------
 # 6. Command & conversation handlers
@@ -226,6 +232,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start - Memulai bot\n"
         "/upload_master - Unggah file master toko (Excel)\n"
         "/upload_report - Unggah laporan penjualan harian (file .txt)\n"
+        "/report_text - Masukkan laporan penjualan via copy-paste teks\n"
         "/status - Ringkasan data terbaru\n"
         "/am `<ayam/sosis>` - Daftar Area Manager\n"
         "/as `<ayam/sosis> <kode_am>` - Daftar AS di bawah AM\n"
@@ -234,7 +241,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/download `<ayam/sosis> <kode_am|as>` - Unduh CSV detail\n\n"
         "Contoh: /am ayam\n"
         "        /as sosis RFK\n"
-        "        /top ayam RFK"
+        "        /top ayam RFK\n"
+        "        /report_text → lalu tempel teks laporan"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -252,8 +260,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last = get_last_update(chat_id, mod)
         if last:
             df = get_transaction(chat_id, mod)
-            toko_ada = df[MASTER_COLS["realtime"]].notna().sum()
-            msg += f"• {mod.capitalize()}: {toko_ada} toko berdata (update {last})\n"
+            if df is not None:
+                toko_ada = df[MASTER_COLS["realtime"]].notna().sum()
+                msg += f"• {mod.capitalize()}: {toko_ada} toko berdata (update {last})\n"
         else:
             msg += f"• {mod.capitalize()}: belum ada data\n"
     await update.message.reply_text(msg)
@@ -275,6 +284,18 @@ async def receive_master(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_bytes = await file.download_as_bytearray()
     try:
         df = load_master_excel(file_bytes)
+        # Validasi kolom wajib
+        missing = []
+        for col in [MASTER_COLS["kode_toko"], MASTER_COLS["am"], MASTER_COLS["as"], MASTER_COLS["type_col"]]:
+            if col not in df.columns:
+                missing.append(col)
+        if missing:
+            await update.message.reply_text(
+                f"❌ Kolom berikut tidak ditemukan di file master: {', '.join(missing)}\n"
+                "Pastikan kolom tersebut ada dan namanya sesuai."
+            )
+            return ConversationHandler.END
+
         set_master(update.effective_chat.id, df)
         await update.message.reply_text(f"✅ Master berhasil diunggah: {len(df)} toko.")
     except Exception as e:
@@ -287,7 +308,7 @@ async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ----- Upload Report -----
+# ----- Upload Report (file) -----
 async def upload_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Kirim file laporan (.txt) untuk modul Ayam atau Sosis.")
     return UPLOAD_REPORT
@@ -310,11 +331,41 @@ async def receive_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = await context.bot.get_file(document.file_id)
     file_bytes = await file.download_as_bytearray()
     content = file_bytes.decode("utf-8")
+    return await proses_laporan_dari_teks(update, chat_id, master, content)
+
+
+# ----- Input Report via Copy-Paste (teks langsung) -----
+async def report_text_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Silakan tempel (paste) teks laporan penjualan (Ayam/Sosis) di sini.\n"
+        "Pastikan teks mengandung 'FRIED CHICKEN' atau 'HOT SAUSAGE'."
+    )
+    return INPUT_REPORT_TEXT
+
+
+async def receive_report_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    master = get_master(chat_id)
+    if master is None:
+        await update.message.reply_text(
+            "⚠️ Harap unggah master terlebih dahulu dengan /upload_master."
+        )
+        return ConversationHandler.END
+
+    content = update.message.text
+    return await proses_laporan_dari_teks(update, chat_id, master, content)
+
+
+async def proses_laporan_dari_teks(update: Update, chat_id, master, content: str):
+    """Fungsi bersama untuk memproses konten laporan, baik dari file atau teks."""
     df_trans, modul, info = parse_laporan_text_from_content(content, PARSING_PATTERN)
 
     if df_trans is None:
         await update.message.reply_text(f"❌ Gagal parsing: {info}")
-        return ConversationHandler.END
+        return ConversationHandler.END if update.message.text is None else INPUT_REPORT_TEXT
+        # Untuk input teks, tetap stay di state agar bisa coba lagi? Kita atur: jika dari file -> END, jika dari teks -> END juga agar simple.
+    # Sebenarnya kita bisa langsung return END, tapi karena dipanggil dari dua tempat,
+    # kita tetap harus mengembalikan state yang tepat. Biarkan saja return ConversationHandler.END.
 
     if modul == "FRIED CHICKEN":
         mod_key = "ayam"
@@ -324,16 +375,21 @@ async def receive_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Modul tidak dikenal.")
         return ConversationHandler.END
 
-    merged = merge_and_calculate(
-        master,
-        df_trans,
-        MASTER_COLS["kode_toko"],
-        MASTER_COLS["target"],
-        MASTER_COLS["realtime"],
-        MASTER_COLS["ach"],
-        MASTER_COLS["type_col"],
-        MASTER_COLS["type_ayam"] if mod_key == "ayam" else MASTER_COLS["type_sosis"],
-    )
+    try:
+        merged = merge_and_calculate(
+            master,
+            df_trans,
+            MASTER_COLS["kode_toko"],
+            MASTER_COLS["target"],
+            MASTER_COLS["realtime"],
+            MASTER_COLS["ach"],
+            MASTER_COLS["type_col"],
+            MASTER_COLS["type_ayam"] if mod_key == "ayam" else MASTER_COLS["type_sosis"],
+        )
+    except (KeyError, ValueError) as e:
+        await update.message.reply_text(f"❌ Error saat menggabungkan data: {str(e)}")
+        return ConversationHandler.END
+
     set_transaction(chat_id, mod_key, merged, info if isinstance(info, str) else "")
     toko_ada = merged[MASTER_COLS["realtime"]].notna().sum()
     await update.message.reply_text(
@@ -355,7 +411,7 @@ def get_merged(chat_id, modul: str):
         return None, "Master belum diunggah."
     df = get_transaction(chat_id, modul)
     if df is None:
-        return None, f"Belum ada data laporan untuk {modul}. Gunakan /upload_report."
+        return None, f"Belum ada data laporan untuk {modul}. Gunakan /upload_report atau /report_text."
     return df, None
 
 
@@ -426,7 +482,6 @@ async def top_bottom(update: Update, context: ContextTypes.DEFAULT_TYPE, top=Tru
         await update.message.reply_text(err)
         return
 
-    # Cek apakah kode adalah AM atau AS
     if kode in df[MASTER_COLS["am"]].values:
         filtered = df[df[MASTER_COLS["am"]] == kode]
         unit = f"AM {kode}"
@@ -517,11 +572,19 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel_upload)],
     )
-    # Conversation report
+    # Conversation report (file .txt)
     conv_report = ConversationHandler(
         entry_points=[CommandHandler("upload_report", upload_report_start)],
         states={
             UPLOAD_REPORT: [MessageHandler(filters.Document.FileExtension("txt"), receive_report)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_upload)],
+    )
+    # Conversation report text (copy-paste)
+    conv_report_text = ConversationHandler(
+        entry_points=[CommandHandler("report_text", report_text_start)],
+        states={
+            INPUT_REPORT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_report_text)]
         },
         fallbacks=[CommandHandler("cancel", cancel_upload)],
     )
@@ -531,6 +594,7 @@ def main():
     app.add_handler(CommandHandler("status", status))
     app.add_handler(conv_master)
     app.add_handler(conv_report)
+    app.add_handler(conv_report_text)   # <-- handler baru
     app.add_handler(CommandHandler("am", am_list))
     app.add_handler(CommandHandler("as", as_list))
     app.add_handler(CommandHandler("top", top_command))
