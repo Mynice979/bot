@@ -45,18 +45,24 @@ BOTTOM_N = config["ui"]["bottom_n"]
 # 2. Helper: baca master & parse teks
 # -------------------------------------------------------------------
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
-    """Baca file Excel, cari baris header 'Kode Toko' (case‑insensitive)."""
+    """Baca file Excel, cari baris header yang mengandung 'Kode Toko' (tanpa spasi)."""
     df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str)
     header_row = None
     for idx, row in df_raw.iterrows():
         for cell in row:
-            if isinstance(cell, str) and 'kode toko' in cell.lower():
-                header_row = idx
-                break
+            if isinstance(cell, str):
+                # Hapus semua spasi, lowercase, lalu cek 'kodetoko'
+                cleaned = cell.replace(' ', '').lower()
+                if 'kodetoko' in cleaned:
+                    header_row = idx
+                    break
         if header_row is not None:
             break
     if header_row is None:
-        raise ValueError("Kolom 'Kode Toko' tidak ditemukan di file Excel.")
+        preview = df_raw.head(10).to_string(index=False)
+        raise ValueError(
+            f"Kolom 'Kode Toko' tidak ditemukan.\n10 baris pertama:\n{preview}"
+        )
     df = pd.read_excel(io.BytesIO(file_bytes), skiprows=header_row, dtype=str)
     df.columns = df.columns.str.strip()
     return df
