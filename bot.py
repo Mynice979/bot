@@ -1,46 +1,224 @@
+import io
 import os
+import re
 import logging
-import tempfile
 from io import BytesIO
+from collections import defaultdict
+from typing import Optional, Tuple
+
 import pandas as pd
+import numpy as np
+import yaml
 from dotenv import load_dotenv
+
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ConversationHandler,
-    filters, ContextTypes
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ConversationHandler,
+    filters,
+    ContextTypes,
 )
-import yaml
-from src.data_loader import load_master_excel, parse_laporan_text
-from src.aggregator import merge_and_calculate, aggregate_am, aggregate_as, top_bottom_toko
-from src.user_state import set_master, get_master, set_transaction, get_transaction, get_last_update, user_data
 
+# -------------------------------------------------------------------
+# 1. Load environment & config
+# -------------------------------------------------------------------
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("Token bot tidak ditemukan. Set di .env atau environment variable.")
 
-# Load konfigurasi
-with open('config.yaml', 'r') as f:
+with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
-MASTER_COLS = config['master']
-PARSING_PATTERN = config['parsing']['pattern']
-MODUL_MAP = {
-    'ayam': 'ayam',
-    'sosis': 'sosis'
-}
+MASTER_COLS = config["master"]
+PARSING_PATTERN = config["parsing"]["pattern"]
+MODUL_AYAM = config["modul"]["ayam"]
+MODUL_SOSIS = config["modul"]["sosis"]
+UI_TOP = config["ui"]["top_n"]
+UI_BOTTOM = config["ui"]["bottom_n"]
 
-logging.basicConfig(level=logging.INFO)
+# -------------------------------------------------------------------
+# 2. Data loader functions (sebelumnya di src/data_loader.py)
+# -------------------------------------------------------------------
+def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
+    """Baca file master Excel dari bytes, pastikan kolom minimal ada."""
+    df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+    df.columns = df.columns.str.strip()
+    return df
 
-# States untuk ConversationHandler
+
+def parse_laporan_text_from_content(content: str, pattern: str):
+    """
+    Parse laporan dari string content.
+    Return (DataFrame, modul, last_update) atau (None, None, error_msg)
+    """
+    if "FRIED CHICKEN" in content:
+        modul = "FRIED CHICKEN"
+    elif "HOT SAUSAGE" in content:
+        modul = "HOT SAUSAGE"
+    else:
+        return None, None, "Modul tidak dikenali (harus FRIED CHICKEN atau HOT SAUSAGE)"
+
+    # Cari Last Update
+    last_update = None
+    match = re.search(r"Last Update:\s*(\d{2}-\d{2}-\d{4}\s\d{2}:\d{2}:\d{2})", content)
+    if match:
+        last_update = match.group(1)
+
+    # Parse baris data
+    rows = []
+    for line in content.splitlines():
+        m = re.search(pattern, line)
+        if m:
+            rows.append(
+                {
+                    "Kode": m.group("kode"),
+                    "Qty": int(m.group("qty")),
+                    "Rp": int(m.group("rp").replace(",", "")),
+                    "Stock": int(m.group("stock")),
+                }
+            )
+
+    if not rows:
+        return None, modul, "Tidak ada data toko ditemukan."
+
+    df = pd.DataFrame(rows)
+    return df, modul, last_update
+
+
+# -------------------------------------------------------------------
+# 3. Aggregator functions (sebelumnya di src/aggregator.py)
+# -------------------------------------------------------------------
+def merge_and_calculate(
+    master_df: pd.DataFrame,
+    trans_df: pd.DataFrame,
+    kode_col: str,
+    target_col: str,
+    realtime_col: str,
+    ach_col: str,
+    type_col: str,
+    modul_type: str,
+) -> pd.DataFrame:
+    """Gabungkan master dengan transaksi, update REALTIME, hitung ACH."""
+    master_mod = master_df[master_df[type_col] == modul_type].copy()
+    merged = master_mod.merge(trans_df, left_on=kode_col, right_on="Kode", how="left")
+
+    # Update REALTIME
+    merged[realtime_col] = merged["Qty"]
+
+    # Hitung ACH
+    merged[target_col] = pd.to_numeric(merged[target_col], errors="coerce")
+    merged[ach_col] = np.where(
+        (merged[target_col] > 0) & (merged["Qty"].notna()),
+        ((merged["Qty"] / merged[target_col]) * 100).round(1),
+        np.nan,
+    )
+
+    # Kosongkan REALTIME untuk toko yang tidak muncul di laporan
+    merged.loc[merged["Qty"].isna(), realtime_col] = np.nan
+    return merged
+
+
+def aggregate_am(df: pd.DataFrame, am_col: str, as_col: str, realtime_col: str) -> pd.DataFrame:
+    """Agregasi per AM."""
+    agg = (
+        df.groupby(am_col)
+        .agg(
+            total_toko=(am_col, "count"),
+            toko_berdata=(realtime_col, lambda x: x.notna().sum()),
+            realtime_max=(realtime_col, "max"),
+            realtime_min=(realtime_col, "min"),
+        )
+        .reset_index()
+    )
+    agg["realtime_max"] = agg["realtime_max"].fillna(0)
+    agg["realtime_min"] = agg["realtime_min"].fillna(0)
+    return agg
+
+
+def aggregate_as(
+    df: pd.DataFrame, am_col: str, as_col: str, realtime_col: str, kode_am: str
+) -> pd.DataFrame:
+    """Agregasi per AS untuk AM tertentu."""
+    sub = df[df[am_col] == kode_am]
+    agg = (
+        sub.groupby(as_col)
+        .agg(
+            total_toko=(as_col, "count"),
+            toko_berdata=(realtime_col, lambda x: x.notna().sum()),
+            realtime_max=(realtime_col, "max"),
+            realtime_min=(realtime_col, "min"),
+        )
+        .reset_index()
+    )
+    agg["realtime_max"] = agg["realtime_max"].fillna(0)
+    agg["realtime_min"] = agg["realtime_min"].fillna(0)
+    return agg
+
+
+def top_bottom_toko(
+    df: pd.DataFrame,
+    realtime_col: str,
+    nama_toko_col: str,
+    kode_toko_col: str,
+    n: int = 10,
+    ascending: bool = True,
+):
+    """Ambil n toko teratas/terbawah berdasarkan REALTIME."""
+    sorted_df = df.sort_values(by=realtime_col, ascending=ascending, na_position="last")
+    return sorted_df[[kode_toko_col, nama_toko_col, realtime_col]].head(n)
+
+
+# -------------------------------------------------------------------
+# 4. User state (sebelumnya di src/user_state.py)
+# -------------------------------------------------------------------
+user_data = defaultdict(
+    lambda: {
+        "master": None,
+        "ayam": {"df": None, "last_update": None},
+        "sosis": {"df": None, "last_update": None},
+    }
+)
+
+
+def set_master(chat_id, df):
+    user_data[chat_id]["master"] = df
+
+
+def get_master(chat_id):
+    return user_data[chat_id]["master"]
+
+
+def set_transaction(chat_id, modul, df, last_update):
+    user_data[chat_id][modul]["df"] = df
+    user_data[chat_id][modul]["last_update"] = last_update
+
+
+def get_transaction(chat_id, modul):
+    return user_data[chat_id][modul]["df"]
+
+
+def get_last_update(chat_id, modul):
+    return user_data[chat_id][modul].get("last_update")
+
+
+# -------------------------------------------------------------------
+# 5. Conversation states
+# -------------------------------------------------------------------
 UPLOAD_MASTER = 0
 UPLOAD_REPORT = 1
 
+# -------------------------------------------------------------------
+# 6. Command & conversation handlers
+# -------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Selamat datang di Bot Monitoring Ayam & Sosis!\n"
         "Gunakan /help untuk melihat perintah yang tersedia."
     )
+
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -58,7 +236,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "        /as sosis RFK\n"
         "        /top ayam RFK"
     )
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -69,90 +248,94 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = "📊 Status Data:\n"
     msg += f"• Master: {len(master)} toko\n"
-    for mod in ['ayam', 'sosis']:
+    for mod in ["ayam", "sosis"]:
         last = get_last_update(chat_id, mod)
         if last:
             df = get_transaction(chat_id, mod)
-            toko_ada = df[MASTER_COLS['realtime']].notna().sum()
+            toko_ada = df[MASTER_COLS["realtime"]].notna().sum()
             msg += f"• {mod.capitalize()}: {toko_ada} toko berdata (update {last})\n"
         else:
             msg += f"• {mod.capitalize()}: belum ada data\n"
     await update.message.reply_text(msg)
 
-# ----- Conversation: Upload Master -----
+
+# ----- Upload Master -----
 async def upload_master_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Silakan kirim file master Excel (.xlsx).")
     return UPLOAD_MASTER
 
+
 async def receive_master(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = update.message.document
-    if not document.file_name.endswith('.xlsx'):
+    if not document.file_name.endswith(".xlsx"):
         await update.message.reply_text("File harus berformat .xlsx. Coba lagi.")
         return UPLOAD_MASTER
 
     file = await context.bot.get_file(document.file_id)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-        await file.download_to_drive(tmp.name)
-        try:
-            df = load_master_excel(tmp.name)
-            set_master(update.effective_chat.id, df)
-            await update.message.reply_text(f"✅ Master berhasil diunggah: {len(df)} toko.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Gagal membaca master: {str(e)}")
-        finally:
-            os.unlink(tmp.name)
+    file_bytes = await file.download_as_bytearray()
+    try:
+        df = load_master_excel(file_bytes)
+        set_master(update.effective_chat.id, df)
+        await update.message.reply_text(f"✅ Master berhasil diunggah: {len(df)} toko.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal membaca master: {str(e)}")
     return ConversationHandler.END
+
 
 async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Upload dibatalkan.")
     return ConversationHandler.END
 
-# ----- Conversation: Upload Report -----
+
+# ----- Upload Report -----
 async def upload_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Kirim file laporan (.txt) untuk modul Ayam atau Sosis.")
     return UPLOAD_REPORT
 
+
 async def receive_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = update.message.document
-    if not document.file_name.endswith('.txt'):
+    if not document.file_name.endswith(".txt"):
         await update.message.reply_text("File harus berformat .txt.")
         return UPLOAD_REPORT
 
     chat_id = update.effective_chat.id
     master = get_master(chat_id)
     if master is None:
-        await update.message.reply_text("⚠️ Harap unggah master terlebih dahulu dengan /upload_master.")
+        await update.message.reply_text(
+            "⚠️ Harap unggah master terlebih dahulu dengan /upload_master."
+        )
         return ConversationHandler.END
 
     file = await context.bot.get_file(document.file_id)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp:
-        await file.download_to_drive(tmp.name)
-        df_trans, modul, info = parse_laporan_text(tmp.name, PARSING_PATTERN)
-        os.unlink(tmp.name)
+    file_bytes = await file.download_as_bytearray()
+    content = file_bytes.decode("utf-8")
+    df_trans, modul, info = parse_laporan_text_from_content(content, PARSING_PATTERN)
 
     if df_trans is None:
         await update.message.reply_text(f"❌ Gagal parsing: {info}")
         return ConversationHandler.END
 
-    # Tentukan key modul
-    if modul == 'FRIED CHICKEN':
-        mod_key = 'ayam'
-    elif modul == 'HOT SAUSAGE':
-        mod_key = 'sosis'
+    if modul == "FRIED CHICKEN":
+        mod_key = "ayam"
+    elif modul == "HOT SAUSAGE":
+        mod_key = "sosis"
     else:
         await update.message.reply_text("Modul tidak dikenal.")
         return ConversationHandler.END
 
-    # Gabungkan dengan master
     merged = merge_and_calculate(
-        master, df_trans,
-        MASTER_COLS['kode_toko'], MASTER_COLS['target'],
-        MASTER_COLS['realtime'], MASTER_COLS['ach'],
-        MASTER_COLS['type_col'],
-        MASTER_COLS['type_ayam'] if mod_key == 'ayam' else MASTER_COLS['type_sosis']
+        master,
+        df_trans,
+        MASTER_COLS["kode_toko"],
+        MASTER_COLS["target"],
+        MASTER_COLS["realtime"],
+        MASTER_COLS["ach"],
+        MASTER_COLS["type_col"],
+        MASTER_COLS["type_ayam"] if mod_key == "ayam" else MASTER_COLS["type_sosis"],
     )
     set_transaction(chat_id, mod_key, merged, info if isinstance(info, str) else "")
-    toko_ada = merged[MASTER_COLS['realtime']].notna().sum()
+    toko_ada = merged[MASTER_COLS["realtime"]].notna().sum()
     await update.message.reply_text(
         f"✅ Laporan {modul} berhasil diunggah.\n"
         f"Total toko di master: {len(merged)}\n"
@@ -161,10 +344,11 @@ async def receive_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# ----- Perintah Agregasi -----
+
+# ----- Agregasi commands -----
 def get_merged(chat_id, modul: str):
     """Ambil DataFrame merged, validasi."""
-    if modul not in ['ayam', 'sosis']:
+    if modul not in ["ayam", "sosis"]:
         raise ValueError("Modul harus 'ayam' atau 'sosis'")
     master = get_master(chat_id)
     if master is None:
@@ -174,13 +358,14 @@ def get_merged(chat_id, modul: str):
         return None, f"Belum ada data laporan untuk {modul}. Gunakan /upload_report."
     return df, None
 
+
 async def am_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         modul = context.args[0].lower()
     except IndexError:
         await update.message.reply_text("Gunakan: /am <ayam/sosis>")
         return
-    if modul not in ['ayam', 'sosis']:
+    if modul not in ["ayam", "sosis"]:
         await update.message.reply_text("Modul tidak valid.")
         return
 
@@ -189,8 +374,7 @@ async def am_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(err)
         return
 
-    agg = aggregate_am(df, MASTER_COLS['am'], MASTER_COLS['as'], MASTER_COLS['realtime'])
-    # Format teks
+    agg = aggregate_am(df, MASTER_COLS["am"], MASTER_COLS["as"], MASTER_COLS["realtime"])
     lines = [f"📊 Area Manager - {modul.upper()}"]
     for _, row in agg.iterrows():
         lines.append(
@@ -199,6 +383,7 @@ async def am_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Max: {row['realtime_max']:.0f}, Min: {row['realtime_min']:.0f}"
         )
     await update.message.reply_text("\n".join(lines))
+
 
 async def as_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -212,12 +397,13 @@ async def as_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(err)
         return
 
-    if kode_am not in df[MASTER_COLS['am']].values:
+    if kode_am not in df[MASTER_COLS["am"]].values:
         await update.message.reply_text(f"Kode AM '{kode_am}' tidak ditemukan.")
         return
 
-    agg = aggregate_as(df, MASTER_COLS['am'], MASTER_COLS['as'],
-                       MASTER_COLS['realtime'], kode_am)
+    agg = aggregate_as(
+        df, MASTER_COLS["am"], MASTER_COLS["as"], MASTER_COLS["realtime"], kode_am
+    )
     lines = [f"📌 Area Supervisor untuk AM {kode_am} ({modul})"]
     for _, row in agg.iterrows():
         lines.append(
@@ -226,6 +412,7 @@ async def as_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Max: {row['realtime_max']:.0f}, Min: {row['realtime_min']:.0f}"
         )
     await update.message.reply_text("\n".join(lines))
+
 
 async def top_bottom(update: Update, context: ContextTypes.DEFAULT_TYPE, top=True):
     try:
@@ -240,35 +427,42 @@ async def top_bottom(update: Update, context: ContextTypes.DEFAULT_TYPE, top=Tru
         return
 
     # Cek apakah kode adalah AM atau AS
-    if kode in df[MASTER_COLS['am']].values:
-        filtered = df[df[MASTER_COLS['am']] == kode]
+    if kode in df[MASTER_COLS["am"]].values:
+        filtered = df[df[MASTER_COLS["am"]] == kode]
         unit = f"AM {kode}"
-    elif kode in df[MASTER_COLS['as']].values:
-        filtered = df[df[MASTER_COLS['as']] == kode]
+    elif kode in df[MASTER_COLS["as"]].values:
+        filtered = df[df[MASTER_COLS["as"]] == kode]
         unit = f"AS {kode}"
     else:
         await update.message.reply_text(f"Kode '{kode}' tidak ditemukan sebagai AM/AS.")
         return
 
-    n = config['ui']['top_n'] if top else config['ui']['bottom_n']
-    ascending = not top  # top = descending (ascending=False)
+    n = UI_TOP if top else UI_BOTTOM
+    ascending = not top
     res = top_bottom_toko(
-        filtered, MASTER_COLS['realtime'], MASTER_COLS['nama_toko'],
-        MASTER_COLS['kode_toko'], n=n, ascending=ascending
+        filtered,
+        MASTER_COLS["realtime"],
+        MASTER_COLS["nama_toko"],
+        MASTER_COLS["kode_toko"],
+        n=n,
+        ascending=ascending,
     )
     title = f"🔝 {n} Tertinggi" if top else f"🔻 {n} Terendah"
     lines = [f"{title} - {unit} ({modul})"]
     for _, row in res.iterrows():
-        val = row[MASTER_COLS['realtime']]
+        val = row[MASTER_COLS["realtime"]]
         val_str = f"{val:.0f}" if pd.notna(val) else "Tidak Ada"
         lines.append(f"{row[MASTER_COLS['kode_toko']]} {row[MASTER_COLS['nama_toko']]}: {val_str}")
     await update.message.reply_text("\n".join(lines))
 
+
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await top_bottom(update, context, top=True)
 
+
 async def bottom_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await top_bottom(update, context, top=False)
+
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -282,57 +476,71 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(err)
         return
 
-    if kode in df[MASTER_COLS['am']].values:
-        filtered = df[df[MASTER_COLS['am']] == kode]
-    elif kode in df[MASTER_COLS['as']].values:
-        filtered = df[df[MASTER_COLS['as']] == kode]
+    if kode in df[MASTER_COLS["am"]].values:
+        filtered = df[df[MASTER_COLS["am"]] == kode]
+    elif kode in df[MASTER_COLS["as"]].values:
+        filtered = df[df[MASTER_COLS["as"]] == kode]
     else:
         await update.message.reply_text("Kode tidak valid.")
         return
 
-    # Buat CSV dalam memori
     csv_buffer = BytesIO()
     filtered.to_csv(csv_buffer, index=False)
     csv_buffer.seek(0)
     await update.message.reply_document(
         document=csv_buffer,
         filename=f"{modul}_{kode}_detail.csv",
-        caption=f"Detail toko untuk {kode} ({modul})"
+        caption=f"Detail toko untuk {kode} ({modul})",
     )
 
+
+# -------------------------------------------------------------------
+# 7. Error handler
+# -------------------------------------------------------------------
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log error tanpa menghentikan bot."""
+    logging.error(msg="Exception while handling an update:", exc_info=context.error)
+
+
+# -------------------------------------------------------------------
+# 8. Main
+# -------------------------------------------------------------------
 def main():
+    logging.basicConfig(level=logging.INFO)
     app = Application.builder().token(TOKEN).build()
 
     # Conversation master
     conv_master = ConversationHandler(
-        entry_points=[CommandHandler('upload_master', upload_master_start)],
+        entry_points=[CommandHandler("upload_master", upload_master_start)],
         states={
             UPLOAD_MASTER: [MessageHandler(filters.Document.FileExtension("xlsx"), receive_master)]
         },
-        fallbacks=[CommandHandler('cancel', cancel_upload)]
+        fallbacks=[CommandHandler("cancel", cancel_upload)],
     )
     # Conversation report
     conv_report = ConversationHandler(
-        entry_points=[CommandHandler('upload_report', upload_report_start)],
+        entry_points=[CommandHandler("upload_report", upload_report_start)],
         states={
             UPLOAD_REPORT: [MessageHandler(filters.Document.FileExtension("txt"), receive_report)]
         },
-        fallbacks=[CommandHandler('cancel', cancel_upload)]
+        fallbacks=[CommandHandler("cancel", cancel_upload)],
     )
 
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('help', help_command))
-    app.add_handler(CommandHandler('status', status))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("status", status))
     app.add_handler(conv_master)
     app.add_handler(conv_report)
-    app.add_handler(CommandHandler('am', am_list))
-    app.add_handler(CommandHandler('as', as_list))
-    app.add_handler(CommandHandler('top', top_command))
-    app.add_handler(CommandHandler('bottom', bottom_command))
-    app.add_handler(CommandHandler('download', download))
+    app.add_handler(CommandHandler("am", am_list))
+    app.add_handler(CommandHandler("as", as_list))
+    app.add_handler(CommandHandler("top", top_command))
+    app.add_handler(CommandHandler("bottom", bottom_command))
+    app.add_handler(CommandHandler("download", download))
+    app.add_error_handler(error_handler)
 
     logging.info("Bot dimulai...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
