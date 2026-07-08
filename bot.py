@@ -43,11 +43,21 @@ UI_BOTTOM = config["ui"]["bottom_n"]
 # 2. Data loader functions
 # -------------------------------------------------------------------
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
-    """Baca file master Excel dari bytes, pastikan kolom minimal ada."""
-    df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+    """Baca file master Excel, otomatis cari baris header yang mengandung 'Kode Toko'."""
+    # Baca dulu 20 baris pertama tanpa header untuk mencari baris header
+    df_preview = pd.read_excel(io.BytesIO(file_bytes), header=None, nrows=20)
+    header_row = None
+    for idx, row in df_preview.iterrows():
+        if row.astype(str).str.contains('Kode Toko', case=False).any():
+            header_row = idx
+            break
+    if header_row is None:
+        raise ValueError("Kolom 'Kode Toko' tidak ditemukan di 20 baris pertama file master.")
+    
+    # Baca ulang mulai dari baris header
+    df = pd.read_excel(io.BytesIO(file_bytes), skiprows=header_row, dtype=str)
     df.columns = df.columns.str.strip()
     return df
-
 
 def parse_laporan_text_from_content(content: str, pattern: str):
     """
