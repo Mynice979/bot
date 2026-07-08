@@ -224,19 +224,56 @@ def df_summary(df, modul_name):
 # 5. Gambar JPEG untuk opsi 3-6
 # -------------------------------------------------------------------
 def create_table_image(df, title, filename='temp.jpg'):
-    """Buat gambar JPEG dari DataFrame."""
-    fig, ax = plt.subplots(figsize=(10, 2 + 0.4 * len(df)))
+    """Buat gambar JPEG dari DataFrame dengan tampilan profesional."""
+    # Hitung ukuran figure berdasarkan jumlah baris/kolom
+    n_rows, n_cols = df.shape
+    fig_width = max(8, n_cols * 1.8)
+    fig_height = max(3, n_rows * 0.5 + 1.2)
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis('off')
-    table = ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
+
+    # Buat tabel
+    table = ax.table(
+        cellText=df.values,
+        colLabels=df.columns,
+        cellLoc='center',
+        loc='center',
+    )
     table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 1.2)
-    plt.title(title, fontsize=12, weight='bold')
+    table.set_fontsize(10)
+    table.scale(1, 1.5)
+
+    # Gaya header
+    header_color = '#2C3E50'        # biru gelap
+    header_font_color = 'white'
+    row_colors = ['#F9F9F9', '#ECF0F1']   # putih & abu muda
+
+    for j in range(n_cols):
+        cell = table[0, j]
+        cell.set_facecolor(header_color)
+        cell.set_text_props(color=header_font_color, weight='bold')
+
+    # Gaya baris data
+    for i in range(1, n_rows + 1):
+        for j in range(n_cols):
+            cell = table[i, j]
+            cell.set_facecolor(row_colors[(i-1) % 2])
+            cell.set_edgecolor('#BDC3C7')
+            cell.set_linewidth(0.5)
+
+    # Garis tepi header juga
+    for j in range(n_cols):
+        table[0, j].set_edgecolor('#2C3E50')
+        table[0, j].set_linewidth(0.8)
+
+    # Judul
+    ax.set_title(title, fontsize=13, weight='bold', pad=20, color='#2C3E50')
+
     plt.tight_layout()
-    plt.savefig(filename, format='jpg', dpi=150)
+    plt.savefig(filename, format='jpg', dpi=180, bbox_inches='tight', facecolor='white')
     plt.close()
     return filename
-
 # -------------------------------------------------------------------
 # 6. State untuk ConversationHandler
 # -------------------------------------------------------------------
