@@ -45,12 +45,11 @@ BOTTOM_N = config["ui"]["bottom_n"]
 # 2. Helper: baca master & parse teks
 # -------------------------------------------------------------------
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
-    """Baca file master Excel, cari sheet yang mengandung kolom 'Kode Toko'."""
+    """Baca file master Excel, cari sheet yang mengandung kolom 'Kode Toko' (tanpa spasi, case‑insensitive)."""
     xls = pd.ExcelFile(io.BytesIO(file_bytes))
     sheet_names = xls.sheet_names
 
     for sheet in sheet_names:
-        # Baca 50 baris pertama tanpa header untuk cek
         try:
             df_preview = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=50, dtype=str)
         except Exception:
@@ -69,23 +68,26 @@ def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
             # Baca sheet ini dengan header yang ditemukan
             df = pd.read_excel(xls, sheet_name=sheet, skiprows=header_row, dtype=str)
             df.columns = df.columns.str.strip()
+
+            # ---------- bulatkan TARGET menjadi integer ----------
+            target_col = MASTER_COLS['target']
+            if target_col in df.columns:
+                df[target_col] = pd.to_numeric(df[target_col], errors='coerce').round().astype('Int64')
+
             # Validasi kolom wajib
             required = [MASTER_COLS['kode_toko'], MASTER_COLS['am'], MASTER_COLS['as'], MASTER_COLS['type_col']]
             missing = [col for col in required if col not in df.columns]
             if not missing:
                 return df
-            else:
-                # Kolom tidak lengkap, lanjut cek sheet lain
-                continue
+            # Jika kolom tidak lengkap, lanjutkan ke sheet berikutnya
 
-    # Jika tidak ada sheet yang cocok, tampilkan pesan jelas
+    # Tidak ditemukan sheet yang valid
     raise ValueError(
         f"Tidak ditemukan sheet yang valid di file Excel.\n"
         f"Sheet tersedia: {', '.join(sheet_names)}\n"
         "Pastikan salah satu sheet memiliki header: Kode Toko, AM, AS, TYPE, dll."
     )
-    
-    
+
 def parse_laporan_text(content: str):
     """Kembalikan (DataFrame, modul, last_update) atau None."""
     if 'FRIED CHICKEN' in content:
@@ -118,7 +120,7 @@ def parse_laporan_text(content: str):
 # 3. Penggabungan & perhitungan
 # -------------------------------------------------------------------
 def merge_and_calc(master_df, trans_df, type_val):
-    """Gabungkan, update REALTIME, hitung ACH tanpa mengubah kolom TARGET asli."""
+    """Gabungkan, update REALTIME, hitung ACH tanpa menimpa kolom TARGET asli."""
     kd = MASTER_COLS['kode_toko']
     tp = MASTER_COLS['type_col']
     tg = MASTER_COLS['target']
@@ -149,8 +151,9 @@ def merge_and_calc(master_df, trans_df, type_val):
     merged.drop(columns=['Kode', 'Qty', 'Rp', 'Stock'], inplace=True, errors='ignore')
 
     return merged
+
 # -------------------------------------------------------------------
-# 4. Agregasi & ringkasan
+# 4. Ringkasan teks per modul
 # -------------------------------------------------------------------
 def df_summary(df, modul_name):
     """Buat teks ringkasan untuk satu modul."""
@@ -250,8 +253,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 **Langkah pertama:** unggah file **master toko** dalam format Excel (.xlsx).\n\n"
         "File master HARUS berisi kolom berikut:\n"
         "`Kode Toko`, `Nama Toko`, `AM`, `AS`, `TYPE`, `TARGET`, dll.\n\n"
-        "⚠️ **Bukan** file laporan/rekapan (seperti 'REPORT PENCAPAIAN...'), "
-        "melainkan file daftar seluruh toko dengan target penjualan.\n\n"
+        "⚠️ **Bukan** file laporan/rekapan, melainkan file daftar seluruh toko dengan target penjualan.\n\n"
         "Silakan kirim file tersebut sekarang."
     )
     context.user_data.clear()
@@ -280,7 +282,7 @@ async def receive_master(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text.lower() == 'skip':
-        context.user_data['sosis'] = None
+        context.user_data['sosis_df'] = None
         await update.message.reply_text("Data Sosis dilewati.\nSekarang kirim data **FRIED CHICKEN** (copy‑paste teks) atau ketik *skip*.")
         return WAITING_AYAM
 
@@ -337,7 +339,6 @@ async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Kirim ringkasan
     for s in summaries:
-        # Pisahkan jika terlalu panjang? untuk aman kita kirim per modul
         await update.message.reply_text(s, parse_mode='Markdown')
 
     # Buat inline keyboard pilih modul
@@ -412,14 +413,23 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             col = MASTER_COLS['as']
         sorted_df = merged.sort_values(by=MASTER_COLS['realtime'], ascending=False)
-        # Kirim per grup? Atau satu file dengan semua data, sudah terurut. 
-        # Opsi: kirim satu file besar. Agar lebih rapi, kita bisa mengelompokkan dan menambahkan sheet, tapi untuk sederhana satu file.
         bio = BytesIO()
         with pd.ExcelWriter(bio, engine='openpyxl') as writer:
             for name, group in sorted_df.groupby(col):
                 group.to_excel(writer, sheet_name=str(name)[:31], index=False)
         bio.seek(0)
         await query.message.reply_document(document=bio, filename=filename, caption=f"Detail per {col}")
+        # Kembalikan keyboard opsi agar bisa lanjut
+        keyboard = [
+            [InlineKeyboardButton("1. Detail Per AM", callback_data="opt:detail_am")],
+            [InlineKeyboardButton("2. Detail Per AS", callback_data="opt:detail_as")],
+            [InlineKeyboardButton("3. Top 5 Atas by AM", callback_data="opt:top_am")],
+            [InlineKeyboardButton("4. Top 5 Bawah by AM", callback_data="opt:bottom_am")],
+            [InlineKeyboardButton("5. Top 5 Atas by AS", callback_data="opt:top_as")],
+            [InlineKeyboardButton("6. Top 5 Bawah by AS", callback_data="opt:bottom_as")],
+            [InlineKeyboardButton("🔙 Kembali", callback_data="back_to_modul")],
+        ]
+        await query.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
     elif opt in ['top_am', 'bottom_am', 'top_as', 'bottom_as']:
         # Minta input kode AM/AS
         context.user_data['selected_opt'] = opt
@@ -436,7 +446,7 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Handler untuk input kode setelah opsi 3-6
 async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('awaiting_code'):
-        return  # Biarkan handler lain yang menangani (tidak ada fallback, abaikan)
+        return  # Biarkan handler lain yang menangani
     text = update.message.text.strip()
     mod = context.user_data.get('selected_modul')
     opt = context.user_data.get('selected_opt')
@@ -494,7 +504,14 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # -------------------------------------------------------------------
-# 9. Main
+# 9. Error handler
+# -------------------------------------------------------------------
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log error tanpa menghentikan bot."""
+    logging.error(msg="Exception while handling an update:", exc_info=context.error)
+
+# -------------------------------------------------------------------
+# 10. Main
 # -------------------------------------------------------------------
 def main():
     logging.basicConfig(level=logging.INFO)
@@ -517,6 +534,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_code))
 
     app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text("/start untuk memulai.\nProses: upload master, input Sosis, input Ayam, lalu pilih opsi.")))
+
+    app.add_error_handler(error_handler)
 
     logging.info("Bot berjalan...")
     app.run_polling()
