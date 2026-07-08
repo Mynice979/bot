@@ -118,7 +118,7 @@ def parse_laporan_text(content: str):
 # 3. Penggabungan & perhitungan
 # -------------------------------------------------------------------
 def merge_and_calc(master_df, trans_df, type_val):
-    """Gabungkan, update REALTIME, hitung ACH."""
+    """Gabungkan, update REALTIME, hitung ACH tanpa mengubah kolom TARGET asli."""
     kd = MASTER_COLS['kode_toko']
     tp = MASTER_COLS['type_col']
     tg = MASTER_COLS['target']
@@ -130,16 +130,25 @@ def merge_and_calc(master_df, trans_df, type_val):
         raise ValueError(f"Tidak ada toko dengan TYPE '{type_val}' di master.")
 
     merged = sub.merge(trans_df, left_on=kd, right_on='Kode', how='left')
+
+    # Update REALTIME hanya dari Qty
     merged[rt] = merged['Qty']
-    merged[tg] = pd.to_numeric(merged[tg], errors='coerce')
+
+    # Hitung ACH menggunakan konversi target sementara (tidak mengubah kolom target)
+    target_num = pd.to_numeric(merged[tg], errors='coerce')
     merged[ac] = np.where(
-        (merged[tg] > 0) & merged['Qty'].notna(),
-        ((merged['Qty'] / merged[tg]) * 100).round(1),
+        (target_num > 0) & merged['Qty'].notna(),
+        ((merged['Qty'] / target_num) * 100).round(1),
         np.nan
     )
-    merged.loc[merged['Qty'].isna(), rt] = np.nan
-    return merged
 
+    # Kosongkan REALTIME untuk toko yang tidak muncul di laporan
+    merged.loc[merged['Qty'].isna(), rt] = np.nan
+
+    # Hapus kolom dari data transaksi yang sudah tidak diperlukan
+    merged.drop(columns=['Kode', 'Qty', 'Rp', 'Stock'], inplace=True, errors='ignore')
+
+    return merged
 # -------------------------------------------------------------------
 # 4. Agregasi & ringkasan
 # -------------------------------------------------------------------
