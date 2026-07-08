@@ -14,6 +14,16 @@ master:
 parsing:
   pattern: 'TOKO:(?P<kode>[A-Z0-9]{4})-(?P<nama>.+?)\s+\|\s*(?P<qty>\d+)\s*\|\s*(?P<rp>[\d,]+)\s*\|\s*(?P<stock>\d+)'
 
+modul:
+  ayam:
+    folder: "data/incoming/ayam/"
+    label: "Ayam (Fried Chicken)"
+    type_master: "FRIED CHICKEN"
+  sosis:
+    folder: "data/incoming/sosis/"
+    label: "Sosis (Hot Sausage)"
+    type_master: "SAUSAGE"
+
 ui:
   top_n: 10
   bottom_n: 10
