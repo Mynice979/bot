@@ -404,12 +404,14 @@ async def modul_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['selected_modul'] = mod
 
     keyboard = [
-        [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am")],
-        [InlineKeyboardButton("2. Detail Per AS (Excel)", callback_data="opt:detail_as")],
-        [InlineKeyboardButton("3. Top 5 Toko Atas by AM (JPEG)", callback_data="opt:top_am")],
-        [InlineKeyboardButton("4. Top 5 Toko Bawah by AM (JPEG)", callback_data="opt:bottom_am")],
-        [InlineKeyboardButton("5. Top 5 Toko Atas by AS (JPEG)", callback_data="opt:top_as")],
-        [InlineKeyboardButton("6. Top 5 Toko Bawah by AS (JPEG)", callback_data="opt:bottom_as")],
+        [InlineKeyboardButton("📊 Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
+         InlineKeyboardButton("🖼️ Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
+        [InlineKeyboardButton("📊 Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
+         InlineKeyboardButton("🖼️ Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
+        [InlineKeyboardButton("🏆 Top 5 Toko Atas by AM", callback_data="opt:top_am")],
+        [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
+        [InlineKeyboardButton("🏆 Top 5 Toko Atas by AS", callback_data="opt:top_as")],
+        [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
         [InlineKeyboardButton("🔙 Kembali", callback_data="back_to_modul")],
     ]
     await query.edit_message_text(f"📋 Opsi untuk {MODUL_LABEL[mod]['label']}:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -437,48 +439,70 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Sesi habis, silakan mulai ulang dengan /start.")
         return
 
-    if opt in ['detail_am', 'detail_as']:
-        # Langsung kirim Excel
+    if opt in ['detail_am_excel', 'detail_as_excel', 'detail_am_jpeg', 'detail_as_jpeg']:
         merged = context.user_data.get(f'merged_{mod}')
         if merged is None:
             await query.edit_message_text("Data tidak tersedia.")
             return
-        filename = f"{mod}_{opt}.xlsx"
-        # Filter & sort
+
+        # Tentukan kolom filter & sort
         if 'am' in opt:
             col = MASTER_COLS['am']
         else:
             col = MASTER_COLS['as']
+
         sorted_df = merged.sort_values(by=MASTER_COLS['realtime'], ascending=False)
-        bio = BytesIO()
-        with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+
+        if 'excel' in opt:
+            # --- VERSI EXCEL ---
+            filename = f"{mod}_detail_{col}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx"
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+                for name, group in sorted_df.groupby(col):
+                    # Ambil kolom yang relevan saja
+                    cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'],
+                                 MASTER_COLS['am'], MASTER_COLS['as'],
+                                 MASTER_COLS['realtime'], MASTER_COLS['ach'],
+                                 MASTER_COLS['target']]
+                    group_show = group[cols_show].copy()
+                    group_show.to_excel(writer, sheet_name=str(name)[:31], index=False)
+            bio.seek(0)
+            await query.message.reply_document(
+                document=bio, filename=filename,
+                caption=f"📊 Detail per {col.upper()} - {MODUL_LABEL[mod]['label']} (Excel)"
+            )
+        else:
+            # --- VERSI JPEG ---
+            # Kirim satu gambar per grup (AM/AS)
             for name, group in sorted_df.groupby(col):
-                group.to_excel(writer, sheet_name=str(name)[:31], index=False)
-        bio.seek(0)
-        await query.message.reply_document(document=bio, filename=filename, caption=f"Detail per {col}")
-        # Kembalikan keyboard opsi agar bisa lanjut
+                cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'],
+                             MASTER_COLS['am'], MASTER_COLS['as'],
+                             MASTER_COLS['realtime'], MASTER_COLS['ach']]
+                display_df = group[cols_show].head(20).copy()  # maks 20 toko per gambar
+                display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(
+                    lambda x: f"{x:.0f}" if pd.notna(x) else "-")
+                display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(
+                    lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
+
+                title = f"{col.upper()} {name} - {MODUL_LABEL[mod]['label']}"
+                img_path = create_table_image(display_df, title)
+                caption = f"🖼️ Detail {col.upper()} {name} ({MODUL_LABEL[mod]['label']})"
+                await query.message.reply_photo(photo=open(img_path, 'rb'), caption=caption)
+                os.remove(img_path)
+
+        # Kembalikan keyboard opsi
         keyboard = [
-            [InlineKeyboardButton("1. Detail Per AM", callback_data="opt:detail_am")],
-            [InlineKeyboardButton("2. Detail Per AS", callback_data="opt:detail_as")],
-            [InlineKeyboardButton("3. Top 5 Atas by AM", callback_data="opt:top_am")],
-            [InlineKeyboardButton("4. Top 5 Bawah by AM", callback_data="opt:bottom_am")],
-            [InlineKeyboardButton("5. Top 5 Atas by AS", callback_data="opt:top_as")],
-            [InlineKeyboardButton("6. Top 5 Bawah by AS", callback_data="opt:bottom_as")],
+            [InlineKeyboardButton("📊 Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
+             InlineKeyboardButton("🖼️ Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
+            [InlineKeyboardButton("📊 Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
+             InlineKeyboardButton("🖼️ Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
+            [InlineKeyboardButton("🏆 Top 5 Toko Atas by AM", callback_data="opt:top_am")],
+            [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
+            [InlineKeyboardButton("🏆 Top 5 Toko Atas by AS", callback_data="opt:top_as")],
+            [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
             [InlineKeyboardButton("🔙 Kembali", callback_data="back_to_modul")],
         ]
-        await query.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif opt in ['top_am', 'bottom_am', 'top_as', 'bottom_as']:
-        # Minta input kode AM/AS
-        context.user_data['selected_opt'] = opt
-        if 'am' in opt:
-            pesan = "Masukkan **kode AM** yang diinginkan:"
-        else:
-            pesan = "Masukkan **kode AS** yang diinginkan:"
-        # Simpan status menunggu input
-        context.user_data['awaiting_code'] = True
-        await query.edit_message_text(pesan)
-    else:
-        await query.edit_message_text("Opsi tidak dikenal.")
+        await query.message.reply_text("✅ File terkirim. Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # Handler untuk input kode setelah opsi 3-6
 async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -530,12 +554,14 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('awaiting_code', None)
     # Kembalikan keyboard opsi
     keyboard = [
-        [InlineKeyboardButton("1. Detail Per AM", callback_data="opt:detail_am")],
-        [InlineKeyboardButton("2. Detail Per AS", callback_data="opt:detail_as")],
-        [InlineKeyboardButton("3. Top 5 Atas by AM", callback_data="opt:top_am")],
-        [InlineKeyboardButton("4. Top 5 Bawah by AM", callback_data="opt:bottom_am")],
-        [InlineKeyboardButton("5. Top 5 Atas by AS", callback_data="opt:top_as")],
-        [InlineKeyboardButton("6. Top 5 Bawah by AS", callback_data="opt:bottom_as")],
+        [InlineKeyboardButton("📊 Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
+         InlineKeyboardButton("🖼️ Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
+        [InlineKeyboardButton("📊 Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
+         InlineKeyboardButton("🖼️ Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
+        [InlineKeyboardButton("🏆 Top 5 Toko Atas by AM", callback_data="opt:top_am")],
+        [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
+        [InlineKeyboardButton("🏆 Top 5 Toko Atas by AS", callback_data="opt:top_as")],
+        [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
         [InlineKeyboardButton("🔙 Kembali", callback_data="back_to_modul")],
     ]
     await update.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
