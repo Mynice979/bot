@@ -1,0 +1,25 @@
+> posrtreg07bot:
+Berikut Sales Item Modul
+HOT SAUSAGE
+Cabang: G272
+===================================== 
+Toko                | Qty|        Rp|Stock      
+----------------------------------- 
+TOKO:T4AZ-BASUKI RAH|   6|    73,500|2007
+TOKO:T4EU-AHMAD YANI|  13|   135,000|1177
+TOKO:T7A7-ADAM MALIK|  12|   180,000| 427
+TOKO:T7IC-S. PARMAN |   3|    45,000| 903
+TOKO:T9HC-WEWEWA BAR|  11|   160,000|1222
+TOKO:TB2N-YOS SUDARS|   3|    44,000| 733
+TOKO:THYS-KODI UTARA|   4|    60,000|1871
+TOKO:TJUD-LEDE KALUM|   9|   131,000|1846
+TOKO:TKG3-BONDO KODI|   9|   131,000|2939
+TOKO:TL0I-RAJA YOHAN|  19|   264,500|1490
+TOKO:TMO0-MATAWAI AM|   0|         0|1110
+TOKO:TP3T-BHAYANGKAR|   3|    43,000|2476
+TOKO:TQJK-D.I. PANJA|   2|    28,000| 190
+TOKO:TUXZ-PRAILIU SU|   7|   100,000|2682
+TOKO:TXQN-RAYA ANAKA|   0|         0|1460
+TOKO:TZAM-A. YANI WA|   9|   130,000|1264
+=================================== 
+Last Update: 07-07-2026 16:36:12

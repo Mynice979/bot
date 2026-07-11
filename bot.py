@@ -223,42 +223,65 @@ def df_summary(df, modul_name):
 # -------------------------------------------------------------------
 # 5. Gambar JPEG untuk opsi 3-6
 # -------------------------------------------------------------------
-def create_table_image(df, title, filename='temp.jpg', max_rows_per_page=30):
+def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_per_page=100):
     """
-    Buat gambar JPEG dari DataFrame.
-    Jika data lebih dari max_rows_per_page, pecah menjadi beberapa file.
-    Return: list of filenames
+    Buat gambar JPEG profesional dari DataFrame.
+    - ≤100 toko: 1 file
+    - >100 toko: pagination per 50 toko
+    - Menampilkan Last Update di header
     """
     n_rows = len(df)
     files = []
+    
+    # Tambahkan kolom nomor urut
+    df = df.reset_index(drop=True)
+    df.insert(0, 'No', range(1, len(df) + 1))
     
     for page, start in enumerate(range(0, n_rows, max_rows_per_page)):
         end = min(start + max_rows_per_page, n_rows)
         page_df = df.iloc[start:end]
         page_n_rows, page_n_cols = page_df.shape
         
-        # Ukuran font menyesuaikan jumlah data
-        if page_n_rows > 25:
-            font_size = 7
-            scale_y = 1.0
-        elif page_n_rows > 15:
+        # Ukuran font menyesuaikan
+        if page_n_rows > 50:
+            font_size = 6
+            scale_y = 0.9
+        elif page_n_rows > 25:
             font_size = 8
-            scale_y = 1.2
+            scale_y = 1.1
+        elif page_n_rows > 15:
+            font_size = 9
+            scale_y = 1.3
         else:
             font_size = 10
             scale_y = 1.5
         
-        # Hitung ukuran figure
-        fig_width = max(10, page_n_cols * 2.0)
-        fig_height = max(3, page_n_rows * 0.4 + 1.5)
+        # Ukuran figure
+        fig_width = max(10, page_n_cols * 2.2)
+        fig_height = max(4, page_n_rows * 0.45 + 2.5)
         
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
+        
+        # Background gradient
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('#F8F9FA')
+        gradient = np.linspace(0.98, 0.85, 256).reshape(1, -1)
+        gradient = np.vstack([gradient, gradient])
+        ax.imshow(gradient, aspect='auto', extent=[0, 1, 0, 1], alpha=0.3, cmap='Greys')
         ax.axis('off')
         
-        # Judul dengan nomor halaman jika perlu
-        page_title = f"{title}"
+        # Judul dengan Last Update
+        if last_update:
+            title_full = f"{title}\n📅 Last Update: {last_update}"
+        else:
+            title_full = title
+        
+        # Nomor halaman
         if n_rows > max_rows_per_page:
-            page_title += f" | Halaman {page+1}/{(n_rows-1)//max_rows_per_page + 1}"
+            total_pages = (n_rows - 1) // max_rows_per_page + 1
+            title_full += f" | Halaman {page+1}/{total_pages}"
+        
+        ax.set_title(title_full, fontsize=13, weight='bold', pad=25, color='#2C3E50', loc='center')
         
         # Buat tabel
         table = ax.table(
@@ -266,42 +289,75 @@ def create_table_image(df, title, filename='temp.jpg', max_rows_per_page=30):
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
+            bbox=[0.05, 0.1, 0.9, 0.75]  # [left, bottom, width, height]
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
         table.scale(1, scale_y)
         
         # Gaya header
-        header_color = '#2C3E50'
+        header_color = '#1A5276'  # biru navy
         header_font_color = 'white'
-        row_colors = ['#F9F9F9', '#ECF0F1']
+        alt_row_colors = ['#FFFFFF', '#F2F4F4']  # putih & abu sangat muda
         
         for j in range(page_n_cols):
             cell = table[0, j]
             cell.set_facecolor(header_color)
             cell.set_text_props(color=header_font_color, weight='bold', fontsize=font_size+1)
-            cell.set_edgecolor('#2C3E50')
-            cell.set_linewidth(0.8)
+            cell.set_edgecolor('#154360')
+            cell.set_linewidth(1.2)
+            cell.set_height(0.08)
         
         # Gaya baris data
+        highlight_max_col = None
+        highlight_min_col = None
+        
+        # Cari kolom REALTIME untuk highlight
+        for j, col_name in enumerate(page_df.columns):
+            if 'REALTIME' in str(col_name).upper():
+                highlight_max_col = j
+                break
+        
         for i in range(1, page_n_rows + 1):
+            is_top = False
+            is_bottom = False
+            
+            # Highlight top 3 & bottom 3
+            if highlight_max_col is not None and page_n_rows > 0:
+                try:
+                    val = float(str(page_df.iloc[i-1, highlight_max_col]).replace(',', ''))
+                    all_vals = page_df.iloc[:, highlight_max_col].apply(
+                        lambda x: float(str(x).replace(',', '')) if str(x).replace(',', '').replace('.', '').replace('-', '').isdigit() else 0
+                    )
+                    sorted_vals = all_vals.sort_values(ascending=False)
+                    if i-1 in all_vals.nlargest(3).index:
+                        is_top = True
+                    if i-1 in all_vals.nsmallest(3).index and val > 0:
+                        is_bottom = True
+                except:
+                    pass
+            
             for j in range(page_n_cols):
                 cell = table[i, j]
-                cell.set_facecolor(row_colors[(i-1) % 2])
+                if is_top:
+                    cell.set_facecolor('#D5F5E3')  # hijau muda
+                elif is_bottom:
+                    cell.set_facecolor('#FADBD8')  # merah muda
+                else:
+                    cell.set_facecolor(alt_row_colors[(i-1) % 2])
                 cell.set_edgecolor('#BDC3C7')
                 cell.set_linewidth(0.5)
         
-        # Judul
-        ax.set_title(page_title, fontsize=12, weight='bold', pad=20, color='#2C3E50')
+        # Footer: total toko
+        fig.text(0.5, 0.02, f"Total: {page_n_rows} toko", ha='center', fontsize=9, color='#7F8C8D', style='italic')
         
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
-        plt.savefig(page_filename, format='jpg', dpi=150, bbox_inches='tight', facecolor='white')
+        plt.savefig(page_filename, format='jpg', dpi=200, bbox_inches='tight', facecolor='white')
         plt.close()
         files.append(page_filename)
     
     return files
-
 # -------------------------------------------------------------------
 # 6. State untuk ConversationHandler
 # -------------------------------------------------------------------
@@ -500,10 +556,10 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=f"📊 Detail per {col.upper()} - {MODUL_LABEL[mod]['label']} (Excel)"
             )
         else:
-            # --- VERSI JPEG (semua toko, bisa multi-halaman) ---
+            # --- VERSI JPEG (1 file jika ≤100 toko, pagination jika >100) ---
+            last_update = context.user_data.get(f'{mod}_last', '')
             for name, group in sorted_df.groupby(col):
                 cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'],
-                             MASTER_COLS['am'], MASTER_COLS['as'],
                              MASTER_COLS['realtime'], MASTER_COLS['ach']]
                 display_df = group[cols_show].copy()
                 display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(
@@ -511,22 +567,19 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(
                     lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
                 
-                title = f"{col.upper()} {name} - {MODUL_LABEL[mod]['label']}"
-                # Kirim sebagai album jika multi-halaman
-                img_files = create_table_image(display_df, title, max_rows_per_page=25)
+                title = f"📊 Detail {col.upper()} {name} - {MODUL_LABEL[mod]['label']}"
+                img_files = create_table_image(display_df, title, last_update=last_update, max_rows_per_page=100)
                 
                 if len(img_files) == 1:
-                    caption = f"🖼️ Detail {col.upper()} {name} ({MODUL_LABEL[mod]['label']})"
-                    await query.message.reply_photo(photo=open(img_files[0], 'rb'), caption=caption)
+                    caption = f"🖼️ {title}\n📅 {last_update}" if last_update else f"🖼️ {title}"
+                    await query.message.reply_photo(photo=open(img_files[0], 'rb'), caption=caption[:1024])
                 else:
-                    # Kirim sebagai media group
                     media = []
                     for i, f in enumerate(img_files):
-                        caption = f"Detail {col.upper()} {name} ({MODUL_LABEL[mod]['label']}) - Halaman {i+1}/{len(img_files)}" if i == 0 else ""
-                        media.append(InputMediaPhoto(open(f, 'rb'), caption=caption))
+                        cap = f"{title} - Halaman {i+1}/{len(img_files)}" if i == 0 else ""
+                        media.append(InputMediaPhoto(open(f, 'rb'), caption=cap[:1024]))
                     await query.message.reply_media_group(media=media)
                 
-                # Hapus file sementara
                 for f in img_files:
                     os.remove(f)
         # Kembalikan keyboard opsi
