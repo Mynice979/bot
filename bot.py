@@ -12,7 +12,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -223,57 +223,85 @@ def df_summary(df, modul_name):
 # -------------------------------------------------------------------
 # 5. Gambar JPEG untuk opsi 3-6
 # -------------------------------------------------------------------
-def create_table_image(df, title, filename='temp.jpg'):
-    """Buat gambar JPEG dari DataFrame dengan tampilan profesional."""
-    # Hitung ukuran figure berdasarkan jumlah baris/kolom
-    n_rows, n_cols = df.shape
-    fig_width = max(8, n_cols * 1.8)
-    fig_height = max(3, n_rows * 0.5 + 1.2)
+def create_table_image(df, title, filename='temp.jpg', max_rows_per_page=30):
+    """
+    Buat gambar JPEG dari DataFrame.
+    Jika data lebih dari max_rows_per_page, pecah menjadi beberapa file.
+    Return: list of filenames
+    """
+    n_rows = len(df)
+    files = []
+    
+    for page, start in enumerate(range(0, n_rows, max_rows_per_page)):
+        end = min(start + max_rows_per_page, n_rows)
+        page_df = df.iloc[start:end]
+        page_n_rows, page_n_cols = page_df.shape
+        
+        # Ukuran font menyesuaikan jumlah data
+        if page_n_rows > 25:
+            font_size = 7
+            scale_y = 1.0
+        elif page_n_rows > 15:
+            font_size = 8
+            scale_y = 1.2
+        else:
+            font_size = 10
+            scale_y = 1.5
+        
+        # Hitung ukuran figure
+        fig_width = max(10, page_n_cols * 2.0)
+        fig_height = max(3, page_n_rows * 0.4 + 1.5)
+        
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        ax.axis('off')
+        
+        # Judul dengan nomor halaman jika perlu
+        page_title = f"{title}"
+        if n_rows > max_rows_per_page:
+            page_title += f" | Halaman {page+1}/{(n_rows-1)//max_rows_per_page + 1}"
+        
+        # Buat tabel
+        table = ax.table(
+            cellText=page_df.values,
+            colLabels=page_df.columns,
+            cellLoc='center',
+            loc='center',
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(font_size)
+        table.scale(1, scale_y)
+        
+        # Gaya header
+        header_color = '#2C3E50'
+        header_font_color = 'white'
+        row_colors = ['#F9F9F9', '#ECF0F1']
+        
+        for j in range(page_n_cols):
+            cell = table[0, j]
+            cell.set_facecolor(header_color)
+            cell.set_text_props(color=header_font_color, weight='bold', fontsize=font_size+1)
+            cell.set_edgecolor('#2C3E50')
+            cell.set_linewidth(0.8)
+        
+        # Gaya baris data
+        for i in range(1, page_n_rows + 1):
+            for j in range(page_n_cols):
+                cell = table[i, j]
+                cell.set_facecolor(row_colors[(i-1) % 2])
+                cell.set_edgecolor('#BDC3C7')
+                cell.set_linewidth(0.5)
+        
+        # Judul
+        ax.set_title(page_title, fontsize=12, weight='bold', pad=20, color='#2C3E50')
+        
+        plt.tight_layout()
+        page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
+        plt.savefig(page_filename, format='jpg', dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close()
+        files.append(page_filename)
+    
+    return files
 
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    ax.axis('off')
-
-    # Buat tabel
-    table = ax.table(
-        cellText=df.values,
-        colLabels=df.columns,
-        cellLoc='center',
-        loc='center',
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1, 1.5)
-
-    # Gaya header
-    header_color = '#2C3E50'        # biru gelap
-    header_font_color = 'white'
-    row_colors = ['#F9F9F9', '#ECF0F1']   # putih & abu muda
-
-    for j in range(n_cols):
-        cell = table[0, j]
-        cell.set_facecolor(header_color)
-        cell.set_text_props(color=header_font_color, weight='bold')
-
-    # Gaya baris data
-    for i in range(1, n_rows + 1):
-        for j in range(n_cols):
-            cell = table[i, j]
-            cell.set_facecolor(row_colors[(i-1) % 2])
-            cell.set_edgecolor('#BDC3C7')
-            cell.set_linewidth(0.5)
-
-    # Garis tepi header juga
-    for j in range(n_cols):
-        table[0, j].set_edgecolor('#2C3E50')
-        table[0, j].set_linewidth(0.8)
-
-    # Judul
-    ax.set_title(title, fontsize=13, weight='bold', pad=20, color='#2C3E50')
-
-    plt.tight_layout()
-    plt.savefig(filename, format='jpg', dpi=180, bbox_inches='tight', facecolor='white')
-    plt.close()
-    return filename
 # -------------------------------------------------------------------
 # 6. State untuk ConversationHandler
 # -------------------------------------------------------------------
@@ -472,24 +500,35 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=f"📊 Detail per {col.upper()} - {MODUL_LABEL[mod]['label']} (Excel)"
             )
         else:
-            # --- VERSI JPEG ---
-            # Kirim satu gambar per grup (AM/AS)
+            # --- VERSI JPEG (semua toko, bisa multi-halaman) ---
             for name, group in sorted_df.groupby(col):
                 cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'],
                              MASTER_COLS['am'], MASTER_COLS['as'],
                              MASTER_COLS['realtime'], MASTER_COLS['ach']]
-                display_df = group[cols_show].head(20).copy()  # maks 20 toko per gambar
+                display_df = group[cols_show].copy()
                 display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(
                     lambda x: f"{x:.0f}" if pd.notna(x) else "-")
                 display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(
                     lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
-
+                
                 title = f"{col.upper()} {name} - {MODUL_LABEL[mod]['label']}"
-                img_path = create_table_image(display_df, title)
-                caption = f"🖼️ Detail {col.upper()} {name} ({MODUL_LABEL[mod]['label']})"
-                await query.message.reply_photo(photo=open(img_path, 'rb'), caption=caption)
-                os.remove(img_path)
-
+                # Kirim sebagai album jika multi-halaman
+                img_files = create_table_image(display_df, title, max_rows_per_page=25)
+                
+                if len(img_files) == 1:
+                    caption = f"🖼️ Detail {col.upper()} {name} ({MODUL_LABEL[mod]['label']})"
+                    await query.message.reply_photo(photo=open(img_files[0], 'rb'), caption=caption)
+                else:
+                    # Kirim sebagai media group
+                    media = []
+                    for i, f in enumerate(img_files):
+                        caption = f"Detail {col.upper()} {name} ({MODUL_LABEL[mod]['label']}) - Halaman {i+1}/{len(img_files)}" if i == 0 else ""
+                        media.append(InputMediaPhoto(open(f, 'rb'), caption=caption))
+                    await query.message.reply_media_group(media=media)
+                
+                # Hapus file sementara
+                for f in img_files:
+                    os.remove(f)
         # Kembalikan keyboard opsi
         keyboard = [
             [InlineKeyboardButton("📊 Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
@@ -544,11 +583,18 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(lambda x: f"{x:.0f}" if pd.notna(x) else "-")
     display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
 
-    # Buat gambar
+    # Buat gambar (mendukung multi-halaman jika perlu)
     title = f"Top {n} {'Atas' if 'top' in opt else 'Bawah'} - {col.upper()} {text} ({MODUL_LABEL[mod]['label']})"
-    img_path = create_table_image(display_df, title)
-    await update.message.reply_photo(photo=open(img_path, 'rb'))
-    os.remove(img_path)
+    img_files = create_table_image(display_df, title, max_rows_per_page=25)
+    if len(img_files) == 1:
+        await update.message.reply_photo(photo=open(img_files[0], 'rb'))
+    else:
+        media = []
+        for i, f in enumerate(img_files):
+            media.append(InputMediaPhoto(open(f, 'rb')))
+        await update.message.reply_media_group(media=media)
+    for f in img_files:
+        os.remove(f)
 
     # Reset flag
     context.user_data.pop('awaiting_code', None)
