@@ -4,7 +4,7 @@ import re
 import logging
 from io import BytesIO
 from collections import defaultdict
-from telegram.request import HTTPXRequest
+
 import pandas as pd
 import numpy as np
 import yaml
@@ -23,6 +23,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+from telegram.request import HTTPXRequest
 
 # -------------------------------------------------------------------
 # 1. Load environment & config
@@ -225,7 +226,7 @@ def df_summary(df, modul_name):
     return html
 
 # -------------------------------------------------------------------
-# 5. JPEG table image (professional, no emoji)
+# 5. JPEG table image (HD, rapat, tanpa emoji)
 # -------------------------------------------------------------------
 def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_per_page=100):
     n_rows = len(df)
@@ -239,7 +240,7 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         page_df = df.iloc[start:end]
         page_n_rows, page_n_cols = page_df.shape
 
-        # ukuran font lebih kecil & rapat
+        # ukuran font kecil & rapat
         if page_n_rows > 50:
             font_size = 6.2
             header_font_size = 6.8
@@ -257,7 +258,7 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             header_font_size = 10.0
             scale_y = 1.2
 
-        # hitung lebar kolom, batasi maks 15 karakter agar sempit
+        # lebar kolom maks 15 karakter
         col_widths = []
         for col in page_df.columns:
             max_len = max(
@@ -268,14 +269,12 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         total_width = sum(col_widths) * 0.12 + 1.0
         fig_width = max(9, min(total_width, 16))
 
-        # tinggi figure sangat rapat
         fig_height = max(3.0, page_n_rows * 0.28 + 2.0)
 
         fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
         ax = fig.add_subplot(111)
         ax.axis('off')
 
-        # Title dekat dengan tabel (y=0.95)
         title_lines = [title]
         if last_update:
             title_lines.append(f"Last Update: {last_update}")
@@ -293,18 +292,16 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
                         fontsize=6.5, color='#5D6D7E', style='italic')
 
-        # tabel dengan bbox sangat lebar, hampir tanpa margin kiri/kanan
         table = ax.table(
             cellText=page_df.values,
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0.01, 0.05, 0.98, 0.85]   # mepet kiri & kanan
+            bbox=[0.01, 0.05, 0.98, 0.85]
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
 
-        # header lebih pendek
         header_color = '#1A3C5E'
         for j in range(page_n_cols):
             cell = table[0, j]
@@ -312,9 +309,8 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             cell.set_text_props(color='white', weight='bold', fontsize=header_font_size)
             cell.set_edgecolor('#0F2A44')
             cell.set_linewidth(0.4)
-            cell.set_height(0.04)   # sangat pendek
+            cell.set_height(0.04)
 
-        # body
         row_colors = ['#FFFFFF', '#F4F6F7']
         highlight_green = '#E8F8F5'
         highlight_red = '#FDEDEC'
@@ -357,10 +353,8 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
                 else:
                     cell.set_facecolor(row_colors[(i-1) % 2])
 
-        # footer
         fig.text(0.5, 0.015, f"Total: {page_n_rows} toko", ha='center', fontsize=6.5, color='#7F8C8D')
 
-        # save dengan quality tinggi, dpi 300, tanpa padding berlebih
         plt.tight_layout(rect=[0, 0.02, 1, 0.94], pad=0.05)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
@@ -374,9 +368,23 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # -------------------------------------------------------------------
 # 6. State & handlers
 # -------------------------------------------------------------------
-WAITING_MASTER_FILE = 0   # state untuk upload_master
+WAITING_MASTER_FILE = 0   # untuk upload_master
 WAITING_SOSIS = 1
 WAITING_AYAM = 2
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mulai input data, pastikan master sudah diupload."""
+    if 'master' not in context.user_data or context.user_data['master'] is None:
+        await update.message.reply_text(
+            "Anda belum mengunggah file struktur master.\n"
+            "Silakan gunakan perintah /upload_struktur_master terlebih dahulu."
+        )
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        "Kirim data HOT SAUSAGE (copy‑paste teks) atau ketik *skip* jika tidak ada."
+    )
+    return WAITING_SOSIS
 
 async def upload_master_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Silakan kirim file master toko (.xlsx).")
@@ -407,25 +415,11 @@ async def cancel_master_upload(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Upload master dibatalkan.")
     return ConversationHandler.END
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mulai input data, pastikan master sudah diupload."""
-    if 'master' not in context.user_data or context.user_data['master'] is None:
-        await update.message.reply_text(
-            "Anda belum mengunggah file struktur master.\n"
-            "Silakan gunakan perintah /upload_struktur_master terlebih dahulu."
-        )
-        return ConversationHandler.END
-
-    await update.message.reply_text(
-        "Kirim data HOT SAUSAGE (copy‑paste teks) atau ketik *skip* jika tidak ada."
-    )
-    return WAITING_SOSIS
-
 async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text.lower() == 'skip':
         context.user_data['sosis_df'] = None
-        await update.message.reply_text("Data Sosis dilewati.\nSekarang kirim data FRIED CHICKEN (copy-paste teks) atau ketik *skip*.")
+        await update.message.reply_text("Data Sosis dilewati.\nSekarang kirim data FRIED CHICKEN (copy‑paste teks) atau ketik *skip*.")
         return WAITING_AYAM
     df_trans, modul, info = parse_laporan_text(text)
     if df_trans is None or modul != 'HOT SAUSAGE':
@@ -433,7 +427,7 @@ async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_SOSIS
     context.user_data['sosis_df'] = df_trans
     context.user_data['sosis_last'] = info
-    await update.message.reply_text("Data Sosis diterima.\nSekarang kirim data FRIED CHICKEN (copy-paste teks) atau ketik *skip*.")
+    await update.message.reply_text("Data Sosis diterima.\nSekarang kirim data FRIED CHICKEN (copy‑paste teks) atau ketik *skip*.")
     return WAITING_AYAM
 
 async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -574,7 +568,6 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for f in img_files:
                     os.remove(f)
 
-        # Kembalikan keyboard opsi
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
              InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
@@ -660,9 +653,12 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------------------------------------------
 def main():
     logging.basicConfig(level=logging.INFO)
+
+    # timeout lebih besar untuk kirim gambar
     request = HTTPXRequest(connect_timeout=30, read_timeout=60, write_timeout=60)
     app = Application.builder().token(TOKEN).request(request).build()
 
+    # conversation /start
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -671,22 +667,26 @@ def main():
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
-    conv_master = ConversationHandler(
-    entry_points=[CommandHandler('upload_struktur_master', upload_master_start)],
-    states={
-        WAITING_MASTER_FILE: [MessageHandler(filters.Document.FileExtension("xlsx"), receive_master_file)],
-    },
-    fallbacks=[CommandHandler('cancel', cancel_master_upload)],
-    )
-    app.add_handler(conv_master)
 
+    # conversation /upload_struktur_master
+    conv_master = ConversationHandler(
+        entry_points=[CommandHandler('upload_struktur_master', upload_master_start)],
+        states={
+            WAITING_MASTER_FILE: [MessageHandler(filters.Document.FileExtension("xlsx"), receive_master_file)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_master_upload)],
+    )
+
+    app.add_handler(conv_master)
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(modul_selected, pattern='^mod:'))
     app.add_handler(CallbackQueryHandler(option_selected, pattern='^opt:|^back_to_modul'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_code))
-    app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text("/start - Mulai input data penjualan (Sosis & Ayam)\n"
+    app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text(
+        "/start - Mulai input data penjualan (Sosis & Ayam)\n"
         "/upload_struktur_master - Upload file master toko (.xlsx)\n"
-        "/cancel - Batalkan proses")))
+        "/cancel - Batalkan proses"
+    )))
     app.add_error_handler(error_handler)
 
     logging.info("Bot berjalan...")
