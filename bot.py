@@ -239,82 +239,82 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         page_df = df.iloc[start:end]
         page_n_rows, page_n_cols = page_df.shape
 
-        # Ukuran font dinamis, lebih kecil agar rapat
+        # ukuran font lebih kecil & rapat
         if page_n_rows > 50:
-            font_size = 6.5
-            header_font_size = 7
-            scale_y = 0.95
+            font_size = 6.2
+            header_font_size = 6.8
+            scale_y = 0.9
         elif page_n_rows > 25:
-            font_size = 8
-            header_font_size = 8.5
-            scale_y = 1.05
+            font_size = 7.5
+            header_font_size = 8.0
+            scale_y = 1.0
         elif page_n_rows > 15:
-            font_size = 9
-            header_font_size = 9.5
-            scale_y = 1.15
+            font_size = 8.5
+            header_font_size = 9.0
+            scale_y = 1.1
         else:
-            font_size = 10
-            header_font_size = 10.5
-            scale_y = 1.25
+            font_size = 9.5
+            header_font_size = 10.0
+            scale_y = 1.2
 
-        # Lebar kolom otomatis, tapi batasi agar tidak terlalu lebar
+        # hitung lebar kolom, batasi maks 15 karakter agar sempit
         col_widths = []
         for col in page_df.columns:
             max_len = max(
                 len(str(col)),
                 page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0
             )
-            # batasi maksimal 22 karakter per kolom untuk tampilan rapat
-            col_widths.append(min(max_len, 20))
-        total_width = sum(col_widths) * 0.14 + 1.5
-        fig_width = max(10, min(total_width, 18))
+            col_widths.append(min(max_len, 15))
+        total_width = sum(col_widths) * 0.12 + 1.0
+        fig_width = max(9, min(total_width, 16))
+
         # tinggi figure sangat rapat
-        fig_height = max(3.5, page_n_rows * 0.32 + 2.2)
+        fig_height = max(3.0, page_n_rows * 0.28 + 2.0)
 
         fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
         ax = fig.add_subplot(111)
         ax.axis('off')
 
-        # Judul
+        # Title dekat dengan tabel (y=0.95)
         title_lines = [title]
         if last_update:
             title_lines.append(f"Last Update: {last_update}")
         if n_rows > max_rows_per_page:
             total_pages = (n_rows - 1) // max_rows_per_page + 1
-            title_lines.append(f"Halaman {page+1} dari {total_pages}")
+            title_lines.append(f"Hal {page+1}/{total_pages}")
 
-        y_title = 0.94
+        y_title = 0.96
         for i, line in enumerate(title_lines):
             if i == 0:
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
-                        fontsize=12, weight='bold', color='#1A3C5E')
+                        fontsize=11, weight='bold', color='#1A3C5E')
             else:
-                y_title -= 0.03
+                y_title -= 0.025
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
-                        fontsize=7.5, color='#5D6D7E', style='italic')
+                        fontsize=6.5, color='#5D6D7E', style='italic')
 
-        # Tabel dengan margin minim
+        # tabel dengan bbox sangat lebar, hampir tanpa margin kiri/kanan
         table = ax.table(
             cellText=page_df.values,
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0.02, 0.06, 0.96, 0.75]  # hampir penuh
+            bbox=[0.01, 0.05, 0.98, 0.85]   # mepet kiri & kanan
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
 
-        # Header styling
+        # header lebih pendek
         header_color = '#1A3C5E'
         for j in range(page_n_cols):
             cell = table[0, j]
             cell.set_facecolor(header_color)
             cell.set_text_props(color='white', weight='bold', fontsize=header_font_size)
             cell.set_edgecolor('#0F2A44')
-            cell.set_linewidth(0.5)
-            cell.set_height(0.05)  # header pendek
+            cell.set_linewidth(0.4)
+            cell.set_height(0.04)   # sangat pendek
 
-        # Body styling
+        # body
         row_colors = ['#FFFFFF', '#F4F6F7']
         highlight_green = '#E8F8F5'
         highlight_red = '#FDEDEC'
@@ -326,31 +326,22 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
                 break
 
         for i in range(1, page_n_rows + 1):
-            is_top = False
-            is_bottom = False
+            is_top = is_bottom = False
             if realtime_col_idx is not None and page_n_rows >= 5:
                 try:
-                    current_val = page_df.iloc[i-1, realtime_col_idx]
-                    if str(current_val).replace('-', '').strip() == '':
-                        current_val = 0
-                    else:
-                        current_val = float(str(current_val).replace(',', ''))
-                    all_vals = []
+                    vals = []
                     for idx in range(page_n_rows):
                         try:
-                            v = page_df.iloc[idx, realtime_col_idx]
-                            if str(v).replace('-', '').strip() == '':
-                                all_vals.append(0)
-                            else:
-                                all_vals.append(float(str(v).replace(',', '')))
+                            v = str(page_df.iloc[idx, realtime_col_idx]).replace(',', '').replace('-', '')
+                            vals.append(float(v) if v != '' else 0)
                         except:
-                            all_vals.append(0)
-                    sorted_indices = sorted(range(len(all_vals)), key=lambda x: all_vals[x], reverse=True)
-                    top3 = sorted_indices[:3]
-                    bottom3 = sorted_indices[-3:] if len(sorted_indices) >= 3 else []
-                    if (i-1) in top3 and all_vals[i-1] > 0:
+                            vals.append(0)
+                    sorted_idx = sorted(range(len(vals)), key=lambda x: vals[x], reverse=True)
+                    top3 = sorted_idx[:3]
+                    bottom3 = sorted_idx[-3:] if len(sorted_idx) >= 3 else []
+                    if (i-1) in top3 and vals[i-1] > 0:
                         is_top = True
-                    if (i-1) in bottom3 and all_vals[i-1] > 0 and (i-1) not in top3:
+                    if (i-1) in bottom3 and vals[i-1] > 0 and (i-1) not in top3:
                         is_bottom = True
                 except:
                     pass
@@ -366,19 +357,20 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
                 else:
                     cell.set_facecolor(row_colors[(i-1) % 2])
 
-        # Footer total toko
-        fig.text(0.5, 0.02, f"Total: {page_n_rows} toko", ha='center', fontsize=7, color='#7F8C8D')
+        # footer
+        fig.text(0.5, 0.015, f"Total: {page_n_rows} toko", ha='center', fontsize=6.5, color='#7F8C8D')
 
-        # Simpan dengan kualitas tinggi dan minim padding
-        plt.tight_layout(rect=[0, 0.03, 1, 0.92], pad=0.1)
+        # save dengan quality tinggi, dpi 300, tanpa padding berlebih
+        plt.tight_layout(rect=[0, 0.02, 1, 0.94], pad=0.05)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
-                    pad_inches=0.05, facecolor='white', edgecolor='none',
+                    pad_inches=0.03, facecolor='white', edgecolor='none',
                     pil_kwargs={'quality': 95, 'optimize': True})
         plt.close()
         files.append(page_filename)
 
     return files
+
 # -------------------------------------------------------------------
 # 6. State & handlers
 # -------------------------------------------------------------------
@@ -655,6 +647,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # 8. Main
 # -------------------------------------------------------------------
 def main():
+    logging.basicConfig(level=logging.INFO)
     request = HTTPXRequest(connect_timeout=30, read_timeout=60, write_timeout=60)
     app = Application.builder().token(TOKEN).request(request).build()
 
