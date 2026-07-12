@@ -4,7 +4,7 @@ import re
 import logging
 from io import BytesIO
 from collections import defaultdict
-
+import html as html_mod
 import pandas as pd
 import numpy as np
 import yaml
@@ -88,6 +88,12 @@ def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
         "Pastikan salah satu sheet memiliki header: Kode Toko, AM, AS, TYPE, dll."
     )
 
+def escape_html(text):
+    """Escape karakter HTML dalam string."""
+    if text is None:
+        return ""
+    return html_mod.escape(str(text))
+
 def parse_laporan_text(content: str):
     """Kembalikan (DataFrame, modul, last_update) atau None."""
     if 'FRIED CHICKEN' in content:
@@ -156,7 +162,7 @@ def merge_and_calc(master_df, trans_df, type_val):
 # 4. Ringkasan teks per modul
 # -------------------------------------------------------------------
 def df_summary(df, modul_name):
-    """Buat teks ringkasan untuk satu modul."""
+    """Buat ringkasan dalam format HTML untuk satu modul."""
     am_col = MASTER_COLS['am']
     as_col = MASTER_COLS['as']
     rt_col = MASTER_COLS['realtime']
@@ -181,44 +187,54 @@ def df_summary(df, modul_name):
     else:
         top_as = bot_as = pd.DataFrame()
 
-    # --- Top / Bottom Toko (nilai realtime) ---
+    # --- Top / Bottom Toko ---
     df_toko = df[df[rt_col].notna()].sort_values(rt_col, ascending=False)
     top_toko = df_toko.head(TOP_N)
     bot_toko = df_toko.tail(BOTTOM_N)
 
-    # --- Bangun teks ---
-    txt = f"📊 **{modul_name}**\n"
-    txt += "```\n"
-    txt += f"{'AM':<10} {'Total Toko':<12} {'Toko Ada Transaksi':<18}\n"
+    # === Bangun HTML ===
+    html = f"<b>📊 {modul_name}</b>\n\n"
+
+    # Tabel AM
+    html += "<b>📋 Area Manager</b>\n<pre>"
+    html += f"{'AM':<10} {'Total Toko':<12} {'Toko Ada Transaksi':<18}\n"
     for _, r in grp_am.iterrows():
-        txt += f"{r[am_col]:<10} {int(r['Total Toko']):<12} {int(r['Toko Ada Transaksi']):<18}\n"
-    txt += "```\n"
+        html += f"{escape_html(r[am_col]):<10} {int(r['Total Toko']):<12} {int(r['Toko Ada Transaksi']):<18}\n"
+    html += "</pre>\n"
 
+    # Top AS
     if not top_as.empty:
-        txt += f"\n🔝 **Top {TOP_N} AS (rata‑rata realtime)**\n```\n"
+        html += f"<b>🔝 Top {TOP_N} AS (rata‑rata realtime)</b>\n<pre>"
         for _, r in top_as.iterrows():
-            txt += f"{r[as_col]:<10} {r['avg_realtime']:>8.1f}\n"
-        txt += "```\n"
+            html += f"{escape_html(r[as_col]):<10} {r['avg_realtime']:>8.1f}\n"
+        html += "</pre>\n"
 
+    # Bottom AS
     if not bot_as.empty:
-        txt += f"\n🔻 **Bottom {BOTTOM_N} AS (rata‑rata realtime)**\n```\n"
+        html += f"<b>🔻 Bottom {BOTTOM_N} AS (rata‑rata realtime)</b>\n<pre>"
         for _, r in bot_as.iterrows():
-            txt += f"{r[as_col]:<10} {r['avg_realtime']:>8.1f}\n"
-        txt += "```\n"
+            html += f"{escape_html(r[as_col]):<10} {r['avg_realtime']:>8.1f}\n"
+        html += "</pre>\n"
 
+    # Top Toko
     if not top_toko.empty:
-        txt += f"\n🏆 **Top {TOP_N} Toko (realtime tertinggi)**\n```\n"
+        html += f"<b>🏆 Top {TOP_N} Toko (realtime tertinggi)</b>\n<pre>"
         for _, r in top_toko.iterrows():
-            txt += f"{r[kd_col]:<6} {r[nm_col][:20]:<20} {r[rt_col]:>6.0f}\n"
-        txt += "```\n"
+            nama = escape_html(r[nm_col])[:20] if pd.notna(r[nm_col]) else ""
+            realtime = f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-"
+            html += f"{escape_html(r[kd_col]):<6} {nama:<20} {realtime:>6}\n"
+        html += "</pre>\n"
 
+    # Bottom Toko
     if not bot_toko.empty:
-        txt += f"\n🔻 **Bottom {BOTTOM_N} Toko (realtime terendah)**\n```\n"
+        html += f"<b>🔻 Bottom {BOTTOM_N} Toko (realtime terendah)</b>\n<pre>"
         for _, r in bot_toko.iterrows():
-            txt += f"{r[kd_col]:<6} {r[nm_col][:20]:<20} {r[rt_col]:>6.0f}\n"
-        txt += "```\n"
+            nama = escape_html(r[nm_col])[:20] if pd.notna(r[nm_col]) else ""
+            realtime = f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-"
+            html += f"{escape_html(r[kd_col]):<6} {nama:<20} {realtime:>6}\n"
+        html += "</pre>"
 
-    return txt
+    return html
 
 # -------------------------------------------------------------------
 # 5. Gambar JPEG untuk opsi 3-6
@@ -460,7 +476,7 @@ async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Kirim ringkasan
     for s in summaries:
-        await update.message.reply_text(s, parse_mode='Markdown')
+        await update.message.reply_text(s, parse_mode='HTML')
 
     # Buat inline keyboard pilih modul
     keyboard = []
