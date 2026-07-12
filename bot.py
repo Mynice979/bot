@@ -4,7 +4,7 @@ import re
 import logging
 from io import BytesIO
 from collections import defaultdict
-import html as html_mod
+
 import pandas as pd
 import numpy as np
 import yaml
@@ -12,8 +12,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -42,55 +42,10 @@ TOP_N = config["ui"]["top_n"]
 BOTTOM_N = config["ui"]["bottom_n"]
 
 # -------------------------------------------------------------------
-# 2. Helper: baca master & parse teks
+# 2. Helper functions
 # -------------------------------------------------------------------
-def format_table(headers, rows, col_widths=None, title=None):
-    """
-    Buat string tabel ASCII dengan border.
-    headers: list of strings
-    rows: list of tuples/lists
-    col_widths: list of int (jika None, dihitung otomatis)
-    """
-    if not rows and not headers:
-        return ""
-    
-    # Hitung lebar kolom otomatis
-    if col_widths is None:
-        col_widths = []
-        for i, h in enumerate(headers):
-            max_w = len(str(h))
-            for row in rows:
-                if i < len(row):
-                    max_w = max(max_w, len(str(row[i])))
-            col_widths.append(max_w + 2)  # padding kiri-kanan 1 spasi
-    
-    def format_row(values, widths, sep='|'):
-        cells = []
-        for i, (v, w) in enumerate(zip(values, widths)):
-            cells.append(f" {str(v):<{w-1}}")
-        return sep.join(cells) + sep if sep else " ".join(cells)
-    
-    # Garis horizontal
-    total_width = sum(col_widths) + len(headers) - 1
-    line = "-" * total_width
-    double_line = "=" * total_width
-    
-    lines = []
-    if title:
-        lines.append(title)
-        lines.append(double_line)
-    
-    lines.append(format_row(headers, col_widths, sep='|'))
-    lines.append(line)
-    
-    for row in rows:
-        lines.append(format_row(row, col_widths, sep='|'))
-    
-    lines.append(line if title else double_line)
-    return "\n".join(lines)
-
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
-    """Baca file master Excel, cari sheet yang mengandung kolom 'Kode Toko' (tanpa spasi, case‑insensitive)."""
+    """Baca file master Excel, cari sheet yang mengandung kolom 'Kode Toko'."""
     xls = pd.ExcelFile(io.BytesIO(file_bytes))
     sheet_names = xls.sheet_names
 
@@ -110,37 +65,25 @@ def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
             if header_row is not None:
                 break
         if header_row is not None:
-            # Baca sheet ini dengan header yang ditemukan
             df = pd.read_excel(xls, sheet_name=sheet, skiprows=header_row, dtype=str)
             df.columns = df.columns.str.strip()
 
-            # ---------- bulatkan TARGET menjadi integer ----------
             target_col = MASTER_COLS['target']
             if target_col in df.columns:
                 df[target_col] = pd.to_numeric(df[target_col], errors='coerce').round().astype('Int64')
 
-            # Validasi kolom wajib
             required = [MASTER_COLS['kode_toko'], MASTER_COLS['am'], MASTER_COLS['as'], MASTER_COLS['type_col']]
             missing = [col for col in required if col not in df.columns]
             if not missing:
                 return df
-            # Jika kolom tidak lengkap, lanjutkan ke sheet berikutnya
 
-    # Tidak ditemukan sheet yang valid
     raise ValueError(
         f"Tidak ditemukan sheet yang valid di file Excel.\n"
         f"Sheet tersedia: {', '.join(sheet_names)}\n"
         "Pastikan salah satu sheet memiliki header: Kode Toko, AM, AS, TYPE, dll."
     )
 
-def escape_html(text):
-    """Escape karakter HTML dalam string."""
-    if text is None:
-        return ""
-    return html_mod.escape(str(text))
-
 def parse_laporan_text(content: str):
-    """Kembalikan (DataFrame, modul, last_update) atau None."""
     if 'FRIED CHICKEN' in content:
         modul = 'FRIED CHICKEN'
     elif 'HOT SAUSAGE' in content:
@@ -168,10 +111,9 @@ def parse_laporan_text(content: str):
     return pd.DataFrame(rows), modul, last_update
 
 # -------------------------------------------------------------------
-# 3. Penggabungan & perhitungan
+# 3. Merge & calculation
 # -------------------------------------------------------------------
 def merge_and_calc(master_df, trans_df, type_val):
-    """Gabungkan, update REALTIME, hitung ACH tanpa menimpa kolom TARGET asli."""
     kd = MASTER_COLS['kode_toko']
     tp = MASTER_COLS['type_col']
     tg = MASTER_COLS['target']
@@ -183,45 +125,61 @@ def merge_and_calc(master_df, trans_df, type_val):
         raise ValueError(f"Tidak ada toko dengan TYPE '{type_val}' di master.")
 
     merged = sub.merge(trans_df, left_on=kd, right_on='Kode', how='left')
-
-    # Update REALTIME hanya dari Qty
     merged[rt] = merged['Qty']
-
-    # Hitung ACH menggunakan konversi target sementara (tidak mengubah kolom target)
     target_num = pd.to_numeric(merged[tg], errors='coerce')
     merged[ac] = np.where(
         (target_num > 0) & merged['Qty'].notna(),
         ((merged['Qty'] / target_num) * 100).round(1),
         np.nan
     )
-
-    # Kosongkan REALTIME untuk toko yang tidak muncul di laporan
     merged.loc[merged['Qty'].isna(), rt] = np.nan
-
-    # Hapus kolom dari data transaksi yang sudah tidak diperlukan
     merged.drop(columns=['Kode', 'Qty', 'Rp', 'Stock'], inplace=True, errors='ignore')
-
     return merged
 
 # -------------------------------------------------------------------
-# 4. Ringkasan teks per modul
+# 4. ASCII table formatter
 # -------------------------------------------------------------------
+def format_table(headers, rows, col_widths=None, title=None):
+    if not rows and not headers:
+        return ""
+    if col_widths is None:
+        col_widths = []
+        for i, h in enumerate(headers):
+            max_w = len(str(h))
+            for row in rows:
+                if i < len(row):
+                    max_w = max(max_w, len(str(row[i])))
+            col_widths.append(max_w + 2)
+    def format_row(values, widths, sep='|'):
+        cells = [f" {str(v):<{w-1}}" for v, w in zip(values, widths)]
+        return sep.join(cells) + sep
+    total_width = sum(col_widths) + len(headers) - 1
+    line = "-" * total_width
+    double_line = "=" * total_width
+    lines = []
+    if title:
+        lines.append(title)
+        lines.append(double_line)
+    lines.append(format_row(headers, col_widths, sep='|'))
+    lines.append(line)
+    for row in rows:
+        lines.append(format_row(row, col_widths, sep='|'))
+    lines.append(line if title else double_line)
+    return "\n".join(lines)
+
 def df_summary(df, modul_name):
-    """Buat ringkasan dalam format HTML (tabel ASCII) untuk satu modul."""
     am_col = MASTER_COLS['am']
     as_col = MASTER_COLS['as']
     rt_col = MASTER_COLS['realtime']
     nm_col = MASTER_COLS['nama_toko']
     kd_col = MASTER_COLS['kode_toko']
 
-    # --- Agregasi AM ---
     grp_am = df.groupby(am_col).agg(
         total_toko=(am_col, 'count'),
         toko_berdata=(rt_col, lambda x: x.notna().sum()),
     ).reset_index()
     grp_am.columns = [am_col, 'Total Toko', 'Toko Ada Transaksi']
 
-    # --- Agregasi AS ---
     df_as = df[df[rt_col].notna()].copy()
     top_as = bot_as = pd.DataFrame()
     if not df_as.empty:
@@ -229,209 +187,194 @@ def df_summary(df, modul_name):
         top_as = grp_as.nlargest(TOP_N, 'avg_realtime')
         bot_as = grp_as.nsmallest(BOTTOM_N, 'avg_realtime')
 
-    # --- Top / Bottom Toko ---
     df_toko = df[df[rt_col].notna()].sort_values(rt_col, ascending=False)
     top_toko = df_toko.head(TOP_N)
     bot_toko = df_toko.tail(BOTTOM_N)
 
-    html = f"<b>📊 {modul_name}</b>\n<pre>"
+    html = f"<b>Data: {modul_name}</b>\n<pre>"
 
-    # Tabel AM
     headers_am = ['AM', 'Total Toko', 'Toko Ada Transaksi']
     rows_am = [(r[am_col], int(r['Total Toko']), int(r['Toko Ada Transaksi'])) for _, r in grp_am.iterrows()]
-    html += format_table(headers_am, rows_am, title="📋 Area Manager")
+    html += format_table(headers_am, rows_am, title="Area Manager")
     html += "\n\n"
 
-    # Top AS
     if not top_as.empty:
         headers_as = ['AS', 'Avg Realtime']
         rows_as = [(r[as_col], f"{r['avg_realtime']:.1f}") for _, r in top_as.iterrows()]
-        html += format_table(headers_as, rows_as, title=f"🔝 Top {TOP_N} AS (rata‑rata realtime)")
+        html += format_table(headers_as, rows_as, title=f"Top {TOP_N} AS (rata-rata realtime)")
         html += "\n\n"
 
-    # Bottom AS
     if not bot_as.empty:
         headers_as = ['AS', 'Avg Realtime']
         rows_as = [(r[as_col], f"{r['avg_realtime']:.1f}") for _, r in bot_as.iterrows()]
-        html += format_table(headers_as, rows_as, title=f"🔻 Bottom {BOTTOM_N} AS (rata‑rata realtime)")
+        html += format_table(headers_as, rows_as, title=f"Bottom {BOTTOM_N} AS (rata-rata realtime)")
         html += "\n\n"
 
-    # Top Toko
     if not top_toko.empty:
         headers_toko = ['Kode Toko', 'Nama Toko', 'Realtime']
-        rows_top = [
-            (r[kd_col], str(r[nm_col])[:20], f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-")
-            for _, r in top_toko.iterrows()
-        ]
-        html += format_table(headers_toko, rows_top, title=f"🏆 Top {TOP_N} Toko (realtime tertinggi)")
+        rows_top = [(r[kd_col], str(r[nm_col])[:20], f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-") for _, r in top_toko.iterrows()]
+        html += format_table(headers_toko, rows_top, title=f"Top {TOP_N} Toko (realtime tertinggi)")
         html += "\n\n"
 
-    # Bottom Toko
     if not bot_toko.empty:
         headers_toko = ['Kode Toko', 'Nama Toko', 'Realtime']
-        rows_bot = [
-            (r[kd_col], str(r[nm_col])[:20], f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-")
-            for _, r in bot_toko.iterrows()
-        ]
-        html += format_table(headers_toko, rows_bot, title=f"🔻 Bottom {BOTTOM_N} Toko (realtime terendah)")
+        rows_bot = [(r[kd_col], str(r[nm_col])[:20], f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-") for _, r in bot_toko.iterrows()]
+        html += format_table(headers_toko, rows_bot, title=f"Bottom {BOTTOM_N} Toko (realtime terendah)")
 
     html += "</pre>"
     return html
+
 # -------------------------------------------------------------------
-# 5. Gambar JPEG untuk opsi 3-6
+# 5. JPEG table image (professional, no emoji)
 # -------------------------------------------------------------------
 def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_per_page=100):
-    """
-    Buat gambar JPEG profesional dari DataFrame.
-    - ≤100 toko: 1 file
-    - >100 toko: pagination per 50 toko
-    - Menampilkan Last Update di header
-    """
     n_rows = len(df)
     files = []
-    
-    # Tambahkan kolom nomor urut
+
     df = df.reset_index(drop=True)
     df.insert(0, 'No', range(1, len(df) + 1))
-    
+
     for page, start in enumerate(range(0, n_rows, max_rows_per_page)):
         end = min(start + max_rows_per_page, n_rows)
         page_df = df.iloc[start:end]
         page_n_rows, page_n_cols = page_df.shape
-        
-        # Ukuran font menyesuaikan
+
         if page_n_rows > 50:
-            font_size = 6
-            scale_y = 0.9
+            font_size = 7.5
+            header_font_size = 8
+            scale_y = 1.0
         elif page_n_rows > 25:
-            font_size = 8
-            scale_y = 1.1
-        elif page_n_rows > 15:
             font_size = 9
+            header_font_size = 9.5
+            scale_y = 1.15
+        elif page_n_rows > 15:
+            font_size = 10
+            header_font_size = 10.5
             scale_y = 1.3
         else:
-            font_size = 10
-            scale_y = 1.5
-        
-        # Ukuran figure
-        fig_width = max(10, page_n_cols * 2.2)
-        fig_height = max(4, page_n_rows * 0.45 + 2.5)
-        
-        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
-        
-        # Background gradient
+            font_size = 11
+            header_font_size = 11.5
+            scale_y = 1.4
+
+        col_widths = []
+        for col in page_df.columns:
+            max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
+            col_widths.append(min(max_len, 25))
+        total_width = sum(col_widths) * 0.15 + 2
+        fig_width = max(10, min(total_width, 18))
+        fig_height = max(4, page_n_rows * 0.38 + 2.8)
+
+        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='#FAFBFC')
         ax = fig.add_subplot(111)
-        ax.set_facecolor('#F8F9FA')
-        gradient = np.linspace(0.98, 0.85, 256).reshape(1, -1)
-        gradient = np.vstack([gradient, gradient])
-        ax.imshow(gradient, aspect='auto', extent=[0, 1, 0, 1], alpha=0.3, cmap='Greys')
         ax.axis('off')
-        
-        # Judul dengan Last Update
+        ax.set_facecolor('#FAFBFC')
+
+        title_lines = [title]
         if last_update:
-            title_full = f"{title}\n📅 Last Update: {last_update}"
-        else:
-            title_full = title
-        
-        # Nomor halaman
+            title_lines.append(f"Last Update: {last_update}")
         if n_rows > max_rows_per_page:
             total_pages = (n_rows - 1) // max_rows_per_page + 1
-            title_full += f" | Halaman {page+1}/{total_pages}"
-        
-        ax.set_title(title_full, fontsize=13, weight='bold', pad=25, color='#2C3E50', loc='center')
-        
-        # Buat tabel
-        table = ax.table(
-            cellText=page_df.values,
-            colLabels=page_df.columns,
-            cellLoc='center',
-            loc='center',
-            bbox=[0.05, 0.1, 0.9, 0.75]  # [left, bottom, width, height]
-        )
+            title_lines.append(f"Halaman {page+1} dari {total_pages}")
+
+        y_title = 0.92
+        for i, line in enumerate(title_lines):
+            if i == 0:
+                ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
+                       fontsize=14, weight='bold', color='#1A3C5E')
+            else:
+                y_title -= 0.035
+                ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
+                       fontsize=9, color='#5D6D7E', style='italic')
+
+        table = ax.table(cellText=page_df.values, colLabels=page_df.columns,
+                        cellLoc='center', loc='center',
+                        bbox=[0.03, 0.08, 0.94, 0.72])
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
-        table.scale(1, scale_y)
-        
-        # Gaya header
-        header_color = '#1A5276'  # biru navy
-        header_font_color = 'white'
-        alt_row_colors = ['#FFFFFF', '#F2F4F4']  # putih & abu sangat muda
-        
+
+        header_color = '#1A3C5E'
         for j in range(page_n_cols):
             cell = table[0, j]
             cell.set_facecolor(header_color)
-            cell.set_text_props(color=header_font_color, weight='bold', fontsize=font_size+1)
-            cell.set_edgecolor('#154360')
-            cell.set_linewidth(1.2)
-            cell.set_height(0.08)
-        
-        # Gaya baris data
-        highlight_max_col = None
-        highlight_min_col = None
-        
-        # Cari kolom REALTIME untuk highlight
+            cell.set_text_props(color='white', weight='bold', fontsize=header_font_size)
+            cell.set_edgecolor('#0F2A44')
+            cell.set_linewidth(0.8)
+            cell.set_height(0.06)
+
+        row_colors = ['#FFFFFF', '#F4F6F7']
+        highlight_green = '#E8F8F5'
+        highlight_red = '#FDEDEC'
+
+        realtime_col_idx = None
         for j, col_name in enumerate(page_df.columns):
-            if 'REALTIME' in str(col_name).upper():
-                highlight_max_col = j
+            if 'REALTIME' in str(col_name).upper() and j > 0:
+                realtime_col_idx = j
                 break
-        
+
         for i in range(1, page_n_rows + 1):
             is_top = False
             is_bottom = False
-            
-            # Highlight top 3 & bottom 3
-            if highlight_max_col is not None and page_n_rows > 0:
+            if realtime_col_idx is not None and page_n_rows >= 5:
                 try:
-                    val = float(str(page_df.iloc[i-1, highlight_max_col]).replace(',', ''))
-                    all_vals = page_df.iloc[:, highlight_max_col].apply(
-                        lambda x: float(str(x).replace(',', '')) if str(x).replace(',', '').replace('.', '').replace('-', '').isdigit() else 0
-                    )
-                    sorted_vals = all_vals.sort_values(ascending=False)
-                    if i-1 in all_vals.nlargest(3).index:
+                    current_val = page_df.iloc[i-1, realtime_col_idx]
+                    if str(current_val).replace('-', '').strip() == '':
+                        current_val = 0
+                    else:
+                        current_val = float(str(current_val).replace(',', ''))
+                    all_vals = []
+                    for idx in range(page_n_rows):
+                        try:
+                            v = page_df.iloc[idx, realtime_col_idx]
+                            if str(v).replace('-', '').strip() == '':
+                                all_vals.append(0)
+                            else:
+                                all_vals.append(float(str(v).replace(',', '')))
+                        except:
+                            all_vals.append(0)
+                    sorted_indices = sorted(range(len(all_vals)), key=lambda x: all_vals[x], reverse=True)
+                    top3 = sorted_indices[:3]
+                    bottom3 = sorted_indices[-3:] if len(sorted_indices) >= 3 else []
+                    if (i-1) in top3 and all_vals[i-1] > 0:
                         is_top = True
-                    if i-1 in all_vals.nsmallest(3).index and val > 0:
+                    if (i-1) in bottom3 and all_vals[i-1] > 0 and (i-1) not in top3:
                         is_bottom = True
                 except:
                     pass
-            
+
             for j in range(page_n_cols):
                 cell = table[i, j]
+                cell.set_edgecolor('#D5D8DC')
+                cell.set_linewidth(0.4)
                 if is_top:
-                    cell.set_facecolor('#D5F5E3')  # hijau muda
+                    cell.set_facecolor(highlight_green)
                 elif is_bottom:
-                    cell.set_facecolor('#FADBD8')  # merah muda
+                    cell.set_facecolor(highlight_red)
                 else:
-                    cell.set_facecolor(alt_row_colors[(i-1) % 2])
-                cell.set_edgecolor('#BDC3C7')
-                cell.set_linewidth(0.5)
-        
-        # Footer: total toko
-        fig.text(0.5, 0.02, f"Total: {page_n_rows} toko", ha='center', fontsize=9, color='#7F8C8D', style='italic')
-        
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+                    cell.set_facecolor(row_colors[(i-1) % 2])
+
+        fig.text(0.5, 0.03, f"Total: {page_n_rows} toko", ha='center', fontsize=8.5, color='#95A5A6')
+        plt.tight_layout(rect=[0, 0.04, 1, 0.93], pad=0.5)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
-        plt.savefig(page_filename, format='jpg', dpi=200, bbox_inches='tight', facecolor='white')
+        plt.savefig(page_filename, format='jpg', dpi=200, bbox_inches='tight',
+                   facecolor=fig.get_facecolor(), edgecolor='none')
         plt.close()
         files.append(page_filename)
-    
     return files
+
 # -------------------------------------------------------------------
-# 6. State untuk ConversationHandler
+# 6. State & handlers
 # -------------------------------------------------------------------
 WAITING_MASTER = 0
 WAITING_SOSIS = 1
 WAITING_AYAM = 2
 
-# -------------------------------------------------------------------
-# 7. Handlers
-# -------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Selamat datang!\n\n"
-        "📌 **Langkah pertama:** unggah file **master toko** dalam format Excel (.xlsx).\n\n"
+        "Selamat datang.\n\n"
+        "Langkah pertama: unggah file master toko dalam format Excel (.xlsx).\n\n"
         "File master HARUS berisi kolom berikut:\n"
-        "`Kode Toko`, `Nama Toko`, `AM`, `AS`, `TYPE`, `TARGET`, dll.\n\n"
-        "⚠️ **Bukan** file laporan/rekapan, melainkan file daftar seluruh toko dengan target penjualan.\n\n"
+        "Kode Toko, Nama Toko, AM, AS, TYPE, TARGET, dll.\n\n"
+        "PERHATIAN: Bukan file laporan/rekapan, melainkan file daftar seluruh toko dengan target penjualan.\n\n"
         "Silakan kirim file tersebut sekarang."
     )
     context.user_data.clear()
@@ -442,36 +385,33 @@ async def receive_master(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc.file_name.endswith('.xlsx'):
         await update.message.reply_text("File harus .xlsx, kirim ulang.")
         return WAITING_MASTER
-
     file = await context.bot.get_file(doc.file_id)
     fb = await file.download_as_bytearray()
     try:
         df = load_master_excel(fb)
         context.user_data['master'] = df
         await update.message.reply_text(
-            f"✅ Master disimpan ({len(df)} toko).\n"
-            "Sekarang kirim data **HOT SAUSAGE** (copy‑paste teks) atau ketik *skip* jika tidak ada."
+            f"Master disimpan ({len(df)} toko).\n"
+            "Sekarang kirim data HOT SAUSAGE (copy-paste teks) atau ketik *skip* jika tidak ada."
         )
         return WAITING_SOSIS
     except Exception as e:
-        await update.message.reply_text(f"❌ Gagal: {e}\nKirim ulang file XLSX yang benar (master toko).")
+        await update.message.reply_text(f"Gagal: {e}\nKirim ulang file XLSX yang benar (master toko).")
         return WAITING_MASTER
 
 async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text.lower() == 'skip':
         context.user_data['sosis_df'] = None
-        await update.message.reply_text("Data Sosis dilewati.\nSekarang kirim data **FRIED CHICKEN** (copy‑paste teks) atau ketik *skip*.")
+        await update.message.reply_text("Data Sosis dilewati.\nSekarang kirim data FRIED CHICKEN (copy-paste teks) atau ketik *skip*.")
         return WAITING_AYAM
-
     df_trans, modul, info = parse_laporan_text(text)
     if df_trans is None or modul != 'HOT SAUSAGE':
-        await update.message.reply_text(f"❌ {info}\nPastikan teks mengandung 'HOT SAUSAGE'. Coba lagi atau ketik *skip*.")
+        await update.message.reply_text(f"Gagal: {info}\nPastikan teks mengandung 'HOT SAUSAGE'. Coba lagi atau ketik *skip*.")
         return WAITING_SOSIS
-
     context.user_data['sosis_df'] = df_trans
     context.user_data['sosis_last'] = info
-    await update.message.reply_text("✅ Data Sosis diterima.\nSekarang kirim data **FRIED CHICKEN** (copy‑paste teks) atau ketik *skip*.")
+    await update.message.reply_text("Data Sosis diterima.\nSekarang kirim data FRIED CHICKEN (copy-paste teks) atau ketik *skip*.")
     return WAITING_AYAM
 
 async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -481,17 +421,15 @@ async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         df_trans, modul, info = parse_laporan_text(text)
         if df_trans is None or modul != 'FRIED CHICKEN':
-            await update.message.reply_text(f"❌ {info}\nPastikan teks mengandung 'FRIED CHICKEN'. Coba lagi atau ketik *skip*.")
+            await update.message.reply_text(f"Gagal: {info}\nPastikan teks mengandung 'FRIED CHICKEN'. Coba lagi atau ketik *skip*.")
             return WAITING_AYAM
         context.user_data['ayam_df'] = df_trans
         context.user_data['ayam_last'] = info
 
-    # --- Proses data ---
     master = context.user_data['master']
     summaries = []
     available_moduls = []
 
-    # Proses Sosis
     if context.user_data.get('sosis_df') is not None:
         try:
             merged_sosis = merge_and_calc(master, context.user_data['sosis_df'], MASTER_COLS['type_sosis'])
@@ -499,9 +437,8 @@ async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
             summaries.append(df_summary(merged_sosis, "HOT SAUSAGE"))
             available_moduls.append('sosis')
         except Exception as e:
-            await update.message.reply_text(f"⚠️ Gagal proses Sosis: {e}")
+            await update.message.reply_text(f"Peringatan (Sosis): {e}")
 
-    # Proses Ayam
     if context.user_data.get('ayam_df') is not None:
         try:
             merged_ayam = merge_and_calc(master, context.user_data['ayam_df'], MASTER_COLS['type_ayam'])
@@ -509,24 +446,21 @@ async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
             summaries.append(df_summary(merged_ayam, "FRIED CHICKEN"))
             available_moduls.append('ayam')
         except Exception as e:
-            await update.message.reply_text(f"⚠️ Gagal proses Ayam: {e}")
+            await update.message.reply_text(f"Peringatan (Ayam): {e}")
 
     if not summaries:
         await update.message.reply_text("Tidak ada data yang berhasil diolah. Selesai.")
         return ConversationHandler.END
 
-    # Kirim ringkasan
     for s in summaries:
         await update.message.reply_text(s, parse_mode='HTML')
 
-    # Buat inline keyboard pilih modul
     keyboard = []
     for mod in available_moduls:
         label = MODUL_LABEL[mod]['label']
         keyboard.append([InlineKeyboardButton(label, callback_data=f"mod:{mod}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("👇 Pilih modul untuk detail lebih lanjut:", reply_markup=reply_markup)
-
+    await update.message.reply_text("Pilih modul untuk detail lebih lanjut:", reply_markup=reply_markup)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -535,27 +469,27 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # -------------------------------------------------------------------
-# 8. Inline keyboard handler (opsi setelah ringkasan)
+# 7. Inline keyboard handlers
 # -------------------------------------------------------------------
 async def modul_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data  # "mod:ayam" atau "mod:sosis"
+    data = query.data
     mod = data.split(":")[1]
     context.user_data['selected_modul'] = mod
 
     keyboard = [
-        [InlineKeyboardButton("📊 Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
-         InlineKeyboardButton("🖼️ Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
-        [InlineKeyboardButton("📊 Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
-         InlineKeyboardButton("🖼️ Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
-        [InlineKeyboardButton("🏆 Top 5 Toko Atas by AM", callback_data="opt:top_am")],
-        [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
-        [InlineKeyboardButton("🏆 Top 5 Toko Atas by AS", callback_data="opt:top_as")],
-        [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
-        [InlineKeyboardButton("🔙 Kembali", callback_data="back_to_modul")],
+        [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
+         InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
+        [InlineKeyboardButton("3. Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
+         InlineKeyboardButton("4. Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
+        [InlineKeyboardButton("5. Top 5 Toko Atas by AM", callback_data="opt:top_am")],
+        [InlineKeyboardButton("6. Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
+        [InlineKeyboardButton("7. Top 5 Toko Atas by AS", callback_data="opt:top_as")],
+        [InlineKeyboardButton("8. Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
+        [InlineKeyboardButton("Kembali", callback_data="back_to_modul")],
     ]
-    await query.edit_message_text(f"📋 Opsi untuk {MODUL_LABEL[mod]['label']}:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(f"Opsi untuk {MODUL_LABEL[mod]['label']}:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -563,18 +497,17 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "back_to_modul":
-        # Kembali ke pilihan modul
         keyboard = []
         for m in ['ayam', 'sosis']:
             if f'merged_{m}' in context.user_data:
                 keyboard.append([InlineKeyboardButton(MODUL_LABEL[m]['label'], callback_data=f"mod:{m}")])
         if keyboard:
-            await query.edit_message_text("👇 Pilih modul:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("Pilih modul:", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await query.edit_message_text("Tidak ada modul tersedia.")
         return
 
-    opt = data.split(":")[1]  # detail_am, top_as, dll
+    opt = data.split(":")[1]
     mod = context.user_data.get('selected_modul')
     if not mod:
         await query.edit_message_text("Sesi habis, silakan mulai ulang dengan /start.")
@@ -585,22 +518,14 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if merged is None:
             await query.edit_message_text("Data tidak tersedia.")
             return
-
-        # Tentukan kolom filter & sort
-        if 'am' in opt:
-            col = MASTER_COLS['am']
-        else:
-            col = MASTER_COLS['as']
-
+        col = MASTER_COLS['am'] if 'am' in opt else MASTER_COLS['as']
         sorted_df = merged.sort_values(by=MASTER_COLS['realtime'], ascending=False)
 
         if 'excel' in opt:
-            # --- VERSI EXCEL ---
             filename = f"{mod}_detail_{col}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx"
             bio = BytesIO()
             with pd.ExcelWriter(bio, engine='openpyxl') as writer:
                 for name, group in sorted_df.groupby(col):
-                    # Ambil kolom yang relevan saja
                     cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'],
                                  MASTER_COLS['am'], MASTER_COLS['as'],
                                  MASTER_COLS['realtime'], MASTER_COLS['ach'],
@@ -608,55 +533,50 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     group_show = group[cols_show].copy()
                     group_show.to_excel(writer, sheet_name=str(name)[:31], index=False)
             bio.seek(0)
-            await query.message.reply_document(
-                document=bio, filename=filename,
-                caption=f"📊 Detail per {col.upper()} - {MODUL_LABEL[mod]['label']} (Excel)"
-            )
+            await query.message.reply_document(document=bio, filename=filename, caption=f"Detail per {col.upper()} - {MODUL_LABEL[mod]['label']} (Excel)")
         else:
-            # --- VERSI JPEG (1 file jika ≤100 toko, pagination jika >100) ---
             last_update = context.user_data.get(f'{mod}_last', '')
             for name, group in sorted_df.groupby(col):
                 cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'],
                              MASTER_COLS['realtime'], MASTER_COLS['ach']]
                 display_df = group[cols_show].copy()
-                display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(
-                    lambda x: f"{x:.0f}" if pd.notna(x) else "-")
-                display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(
-                    lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
-                
-                title = f"📊 Detail {col.upper()} {name} - {MODUL_LABEL[mod]['label']}"
+                display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(lambda x: f"{x:.0f}" if pd.notna(x) else "-")
+                display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
+                title = f"Detail {col.upper()} {name} - {MODUL_LABEL[mod]['label']}"
                 img_files = create_table_image(display_df, title, last_update=last_update, max_rows_per_page=100)
-                
                 if len(img_files) == 1:
-                    caption = f"🖼️ {title}\n📅 {last_update}" if last_update else f"🖼️ {title}"
-                    await query.message.reply_photo(photo=open(img_files[0], 'rb'), caption=caption[:1024])
+                    await query.message.reply_photo(photo=open(img_files[0], 'rb'), caption=title[:1024])
                 else:
-                    media = []
-                    for i, f in enumerate(img_files):
-                        cap = f"{title} - Halaman {i+1}/{len(img_files)}" if i == 0 else ""
-                        media.append(InputMediaPhoto(open(f, 'rb'), caption=cap[:1024]))
+                    media = [InputMediaPhoto(open(f, 'rb')) for f in img_files]
                     await query.message.reply_media_group(media=media)
-                
                 for f in img_files:
                     os.remove(f)
+
         # Kembalikan keyboard opsi
         keyboard = [
-            [InlineKeyboardButton("📊 Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
-             InlineKeyboardButton("🖼️ Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
-            [InlineKeyboardButton("📊 Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
-             InlineKeyboardButton("🖼️ Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
-            [InlineKeyboardButton("🏆 Top 5 Toko Atas by AM", callback_data="opt:top_am")],
-            [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
-            [InlineKeyboardButton("🏆 Top 5 Toko Atas by AS", callback_data="opt:top_as")],
-            [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
-            [InlineKeyboardButton("🔙 Kembali", callback_data="back_to_modul")],
+            [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
+             InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
+            [InlineKeyboardButton("3. Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
+             InlineKeyboardButton("4. Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
+            [InlineKeyboardButton("5. Top 5 Toko Atas by AM", callback_data="opt:top_am")],
+            [InlineKeyboardButton("6. Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
+            [InlineKeyboardButton("7. Top 5 Toko Atas by AS", callback_data="opt:top_as")],
+            [InlineKeyboardButton("8. Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
+            [InlineKeyboardButton("Kembali", callback_data="back_to_modul")],
         ]
-        await query.message.reply_text("✅ File terkirim. Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Handler untuk input kode setelah opsi 3-6
+    elif opt in ['top_am', 'bottom_am', 'top_as', 'bottom_as']:
+        context.user_data['selected_opt'] = opt
+        context.user_data['awaiting_code'] = True
+        pesan = "Masukkan kode AM:" if 'am' in opt else "Masukkan kode AS:"
+        await query.edit_message_text(pesan)
+    else:
+        await query.edit_message_text("Opsi tidak dikenal.")
+
 async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('awaiting_code'):
-        return  # Biarkan handler lain yang menangani
+        return
     text = update.message.text.strip()
     mod = context.user_data.get('selected_modul')
     opt = context.user_data.get('selected_opt')
@@ -671,66 +591,50 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop('awaiting_code', None)
         return
 
-    # Tentukan kolom filter
-    if 'am' in opt:
-        col = MASTER_COLS['am']
-    else:
-        col = MASTER_COLS['as']
-
+    col = MASTER_COLS['am'] if 'am' in opt else MASTER_COLS['as']
     if text not in merged[col].values:
         await update.message.reply_text(f"Kode '{text}' tidak ditemukan. Coba lagi:")
         return
 
     filtered = merged[merged[col] == text]
-    # Urutkan
-    ascending = True if 'bottom' in opt else False
+    ascending = 'bottom' in opt
     n = TOP_N if 'top' in opt else BOTTOM_N
     sorted_df = filtered.sort_values(by=MASTER_COLS['realtime'], ascending=ascending).head(n)
 
-    # Siapkan kolom gambar: Kode Toko, Nama Toko, AM, AS, Realtime, ACH
     cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'], MASTER_COLS['am'], MASTER_COLS['as'], MASTER_COLS['realtime'], MASTER_COLS['ach']]
     display_df = sorted_df[cols_show].copy()
     display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(lambda x: f"{x:.0f}" if pd.notna(x) else "-")
     display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
 
-    # Buat gambar (mendukung multi-halaman jika perlu)
     title = f"Top {n} {'Atas' if 'top' in opt else 'Bawah'} - {col.upper()} {text} ({MODUL_LABEL[mod]['label']})"
     img_files = create_table_image(display_df, title, max_rows_per_page=25)
     if len(img_files) == 1:
         await update.message.reply_photo(photo=open(img_files[0], 'rb'))
     else:
-        media = []
-        for i, f in enumerate(img_files):
-            media.append(InputMediaPhoto(open(f, 'rb')))
+        media = [InputMediaPhoto(open(f, 'rb')) for f in img_files]
         await update.message.reply_media_group(media=media)
     for f in img_files:
         os.remove(f)
 
-    # Reset flag
     context.user_data.pop('awaiting_code', None)
-    # Kembalikan keyboard opsi
     keyboard = [
-        [InlineKeyboardButton("📊 Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
-         InlineKeyboardButton("🖼️ Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
-        [InlineKeyboardButton("📊 Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
-         InlineKeyboardButton("🖼️ Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
-        [InlineKeyboardButton("🏆 Top 5 Toko Atas by AM", callback_data="opt:top_am")],
-        [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
-        [InlineKeyboardButton("🏆 Top 5 Toko Atas by AS", callback_data="opt:top_as")],
-        [InlineKeyboardButton("🔻 Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
-        [InlineKeyboardButton("🔙 Kembali", callback_data="back_to_modul")],
+        [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
+         InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
+        [InlineKeyboardButton("3. Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
+         InlineKeyboardButton("4. Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
+        [InlineKeyboardButton("5. Top 5 Toko Atas by AM", callback_data="opt:top_am")],
+        [InlineKeyboardButton("6. Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
+        [InlineKeyboardButton("7. Top 5 Toko Atas by AS", callback_data="opt:top_as")],
+        [InlineKeyboardButton("8. Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
+        [InlineKeyboardButton("Kembali", callback_data="back_to_modul")],
     ]
     await update.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# -------------------------------------------------------------------
-# 9. Error handler
-# -------------------------------------------------------------------
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """Log error tanpa menghentikan bot."""
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
 # -------------------------------------------------------------------
-# 10. Main
+# 8. Main
 # -------------------------------------------------------------------
 def main():
     logging.basicConfig(level=logging.INFO)
@@ -749,11 +653,8 @@ def main():
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(modul_selected, pattern='^mod:'))
     app.add_handler(CallbackQueryHandler(option_selected, pattern='^opt:|^back_to_modul'))
-    # Handler untuk menerima kode setelah opsi 3-6
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_code))
-
     app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text("/start untuk memulai.\nProses: upload master, input Sosis, input Ayam, lalu pilih opsi.")))
-
     app.add_error_handler(error_handler)
 
     logging.info("Bot berjalan...")
