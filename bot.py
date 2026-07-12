@@ -44,6 +44,51 @@ BOTTOM_N = config["ui"]["bottom_n"]
 # -------------------------------------------------------------------
 # 2. Helper: baca master & parse teks
 # -------------------------------------------------------------------
+def format_table(headers, rows, col_widths=None, title=None):
+    """
+    Buat string tabel ASCII dengan border.
+    headers: list of strings
+    rows: list of tuples/lists
+    col_widths: list of int (jika None, dihitung otomatis)
+    """
+    if not rows and not headers:
+        return ""
+    
+    # Hitung lebar kolom otomatis
+    if col_widths is None:
+        col_widths = []
+        for i, h in enumerate(headers):
+            max_w = len(str(h))
+            for row in rows:
+                if i < len(row):
+                    max_w = max(max_w, len(str(row[i])))
+            col_widths.append(max_w + 2)  # padding kiri-kanan 1 spasi
+    
+    def format_row(values, widths, sep='|'):
+        cells = []
+        for i, (v, w) in enumerate(zip(values, widths)):
+            cells.append(f" {str(v):<{w-1}}")
+        return sep.join(cells) + sep if sep else " ".join(cells)
+    
+    # Garis horizontal
+    total_width = sum(col_widths) + len(headers) - 1
+    line = "-" * total_width
+    double_line = "=" * total_width
+    
+    lines = []
+    if title:
+        lines.append(title)
+        lines.append(double_line)
+    
+    lines.append(format_row(headers, col_widths, sep='|'))
+    lines.append(line)
+    
+    for row in rows:
+        lines.append(format_row(row, col_widths, sep='|'))
+    
+    lines.append(line if title else double_line)
+    return "\n".join(lines)
+
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
     """Baca file master Excel, cari sheet yang mengandung kolom 'Kode Toko' (tanpa spasi, case‑insensitive)."""
     xls = pd.ExcelFile(io.BytesIO(file_bytes))
@@ -162,7 +207,7 @@ def merge_and_calc(master_df, trans_df, type_val):
 # 4. Ringkasan teks per modul
 # -------------------------------------------------------------------
 def df_summary(df, modul_name):
-    """Buat ringkasan dalam format HTML untuk satu modul."""
+    """Buat ringkasan dalam format HTML (tabel ASCII) untuk satu modul."""
     am_col = MASTER_COLS['am']
     as_col = MASTER_COLS['as']
     rt_col = MASTER_COLS['realtime']
@@ -176,66 +221,62 @@ def df_summary(df, modul_name):
     ).reset_index()
     grp_am.columns = [am_col, 'Total Toko', 'Toko Ada Transaksi']
 
-    # --- Agregasi AS (rata-rata realtime) ---
+    # --- Agregasi AS ---
     df_as = df[df[rt_col].notna()].copy()
+    top_as = bot_as = pd.DataFrame()
     if not df_as.empty:
-        grp_as = df_as.groupby(as_col).agg(
-            avg_realtime=(rt_col, 'mean')
-        ).reset_index()
+        grp_as = df_as.groupby(as_col).agg(avg_realtime=(rt_col, 'mean')).reset_index()
         top_as = grp_as.nlargest(TOP_N, 'avg_realtime')
         bot_as = grp_as.nsmallest(BOTTOM_N, 'avg_realtime')
-    else:
-        top_as = bot_as = pd.DataFrame()
 
     # --- Top / Bottom Toko ---
     df_toko = df[df[rt_col].notna()].sort_values(rt_col, ascending=False)
     top_toko = df_toko.head(TOP_N)
     bot_toko = df_toko.tail(BOTTOM_N)
 
-    # === Bangun HTML ===
-    html = f"<b>📊 {modul_name}</b>\n\n"
+    html = f"<b>📊 {modul_name}</b>\n<pre>"
 
     # Tabel AM
-    html += "<b>📋 Area Manager</b>\n<pre>"
-    html += f"{'AM':<10} {'Total Toko':<12} {'Toko Ada Transaksi':<18}\n"
-    for _, r in grp_am.iterrows():
-        html += f"{escape_html(r[am_col]):<10} {int(r['Total Toko']):<12} {int(r['Toko Ada Transaksi']):<18}\n"
-    html += "</pre>\n"
+    headers_am = ['AM', 'Total Toko', 'Toko Ada Transaksi']
+    rows_am = [(r[am_col], int(r['Total Toko']), int(r['Toko Ada Transaksi'])) for _, r in grp_am.iterrows()]
+    html += format_table(headers_am, rows_am, title="📋 Area Manager")
+    html += "\n\n"
 
     # Top AS
     if not top_as.empty:
-        html += f"<b>🔝 Top {TOP_N} AS (rata‑rata realtime)</b>\n<pre>"
-        for _, r in top_as.iterrows():
-            html += f"{escape_html(r[as_col]):<10} {r['avg_realtime']:>8.1f}\n"
-        html += "</pre>\n"
+        headers_as = ['AS', 'Avg Realtime']
+        rows_as = [(r[as_col], f"{r['avg_realtime']:.1f}") for _, r in top_as.iterrows()]
+        html += format_table(headers_as, rows_as, title=f"🔝 Top {TOP_N} AS (rata‑rata realtime)")
+        html += "\n\n"
 
     # Bottom AS
     if not bot_as.empty:
-        html += f"<b>🔻 Bottom {BOTTOM_N} AS (rata‑rata realtime)</b>\n<pre>"
-        for _, r in bot_as.iterrows():
-            html += f"{escape_html(r[as_col]):<10} {r['avg_realtime']:>8.1f}\n"
-        html += "</pre>\n"
+        headers_as = ['AS', 'Avg Realtime']
+        rows_as = [(r[as_col], f"{r['avg_realtime']:.1f}") for _, r in bot_as.iterrows()]
+        html += format_table(headers_as, rows_as, title=f"🔻 Bottom {BOTTOM_N} AS (rata‑rata realtime)")
+        html += "\n\n"
 
     # Top Toko
     if not top_toko.empty:
-        html += f"<b>🏆 Top {TOP_N} Toko (realtime tertinggi)</b>\n<pre>"
-        for _, r in top_toko.iterrows():
-            nama = escape_html(r[nm_col])[:20] if pd.notna(r[nm_col]) else ""
-            realtime = f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-"
-            html += f"{escape_html(r[kd_col]):<6} {nama:<20} {realtime:>6}\n"
-        html += "</pre>\n"
+        headers_toko = ['Kode Toko', 'Nama Toko', 'Realtime']
+        rows_top = [
+            (r[kd_col], str(r[nm_col])[:20], f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-")
+            for _, r in top_toko.iterrows()
+        ]
+        html += format_table(headers_toko, rows_top, title=f"🏆 Top {TOP_N} Toko (realtime tertinggi)")
+        html += "\n\n"
 
     # Bottom Toko
     if not bot_toko.empty:
-        html += f"<b>🔻 Bottom {BOTTOM_N} Toko (realtime terendah)</b>\n<pre>"
-        for _, r in bot_toko.iterrows():
-            nama = escape_html(r[nm_col])[:20] if pd.notna(r[nm_col]) else ""
-            realtime = f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-"
-            html += f"{escape_html(r[kd_col]):<6} {nama:<20} {realtime:>6}\n"
-        html += "</pre>"
+        headers_toko = ['Kode Toko', 'Nama Toko', 'Realtime']
+        rows_bot = [
+            (r[kd_col], str(r[nm_col])[:20], f"{r[rt_col]:.0f}" if pd.notna(r[rt_col]) else "-")
+            for _, r in bot_toko.iterrows()
+        ]
+        html += format_table(headers_toko, rows_bot, title=f"🔻 Bottom {BOTTOM_N} Toko (realtime terendah)")
 
+    html += "</pre>"
     return html
-
 # -------------------------------------------------------------------
 # 5. Gambar JPEG untuk opsi 3-6
 # -------------------------------------------------------------------
