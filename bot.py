@@ -374,40 +374,52 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # -------------------------------------------------------------------
 # 6. State & handlers
 # -------------------------------------------------------------------
-WAITING_MASTER = 0
+WAITING_MASTER_FILE = 0   # state untuk upload_master
 WAITING_SOSIS = 1
 WAITING_AYAM = 2
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Selamat datang.\n\n"
-        "Langkah pertama: unggah file master toko dalam format Excel (.xlsx).\n\n"
-        "File master HARUS berisi kolom berikut:\n"
-        "Kode Toko, Nama Toko, AM, AS, TYPE, TARGET, dll.\n\n"
-        "PERHATIAN: Bukan file laporan/rekapan, melainkan file daftar seluruh toko dengan target penjualan.\n\n"
-        "Silakan kirim file tersebut sekarang."
-    )
-    context.user_data.clear()
-    return WAITING_MASTER
+async def upload_master_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Silakan kirim file master toko (.xlsx).")
+    return WAITING_MASTER_FILE
 
-async def receive_master(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_master_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     if not doc.file_name.endswith('.xlsx'):
-        await update.message.reply_text("File harus .xlsx, kirim ulang.")
-        return WAITING_MASTER
+        await update.message.reply_text("File harus .xlsx. Kirim ulang atau /cancel.")
+        return WAITING_MASTER_FILE
+
     file = await context.bot.get_file(doc.file_id)
     fb = await file.download_as_bytearray()
     try:
         df = load_master_excel(fb)
         context.user_data['master'] = df
         await update.message.reply_text(
-            f"Master disimpan ({len(df)} toko).\n"
-            "Sekarang kirim data HOT SAUSAGE (copy-paste teks) atau ketik *skip* jika tidak ada."
+            f"Master berhasil disimpan ({len(df)} toko).\n"
+            "Sekarang Anda dapat menggunakan /start untuk memulai input data penjualan."
         )
-        return WAITING_SOSIS
     except Exception as e:
-        await update.message.reply_text(f"Gagal: {e}\nKirim ulang file XLSX yang benar (master toko).")
-        return WAITING_MASTER
+        await update.message.reply_text(f"Gagal membaca master: {e}\nKirim ulang file yang benar atau /cancel.")
+        return WAITING_MASTER_FILE
+
+    return ConversationHandler.END
+
+async def cancel_master_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Upload master dibatalkan.")
+    return ConversationHandler.END
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mulai input data, pastikan master sudah diupload."""
+    if 'master' not in context.user_data or context.user_data['master'] is None:
+        await update.message.reply_text(
+            "Anda belum mengunggah file struktur master.\n"
+            "Silakan gunakan perintah /upload_struktur_master terlebih dahulu."
+        )
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        "Kirim data HOT SAUSAGE (copy‑paste teks) atau ketik *skip* jika tidak ada."
+    )
+    return WAITING_SOSIS
 
 async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -654,18 +666,27 @@ def main():
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            WAITING_MASTER: [MessageHandler(filters.Document.FileExtension("xlsx"), receive_master)],
             WAITING_SOSIS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sosis)],
             WAITING_AYAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_ayam)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
+    conv_master = ConversationHandler(
+    entry_points=[CommandHandler('upload_struktur_master', upload_master_start)],
+    states={
+        WAITING_MASTER_FILE: [MessageHandler(filters.Document.FileExtension("xlsx"), receive_master_file)],
+    },
+    fallbacks=[CommandHandler('cancel', cancel_master_upload)],
+    )
+    app.add_handler(conv_master)
 
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(modul_selected, pattern='^mod:'))
     app.add_handler(CallbackQueryHandler(option_selected, pattern='^opt:|^back_to_modul'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_code))
-    app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text("/start untuk memulai.\nProses: upload master, input Sosis, input Ayam, lalu pilih opsi.")))
+    app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text("/start - Mulai input data penjualan (Sosis & Ayam)\n"
+        "/upload_struktur_master - Upload file master toko (.xlsx)\n"
+        "/cancel - Batalkan proses")))
     app.add_error_handler(error_handler)
 
     logging.info("Bot berjalan...")
