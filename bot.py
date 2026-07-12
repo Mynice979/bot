@@ -4,7 +4,7 @@ import re
 import logging
 from io import BytesIO
 from collections import defaultdict
-
+from telegram.request import HTTPXRequest
 import pandas as pd
 import numpy as np
 import yaml
@@ -239,36 +239,43 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         page_df = df.iloc[start:end]
         page_n_rows, page_n_cols = page_df.shape
 
+        # Ukuran font dinamis, lebih kecil agar rapat
         if page_n_rows > 50:
-            font_size = 7.5
-            header_font_size = 8
-            scale_y = 1.0
+            font_size = 6.5
+            header_font_size = 7
+            scale_y = 0.95
         elif page_n_rows > 25:
+            font_size = 8
+            header_font_size = 8.5
+            scale_y = 1.05
+        elif page_n_rows > 15:
             font_size = 9
             header_font_size = 9.5
             scale_y = 1.15
-        elif page_n_rows > 15:
+        else:
             font_size = 10
             header_font_size = 10.5
-            scale_y = 1.3
-        else:
-            font_size = 11
-            header_font_size = 11.5
-            scale_y = 1.4
+            scale_y = 1.25
 
+        # Lebar kolom otomatis, tapi batasi agar tidak terlalu lebar
         col_widths = []
         for col in page_df.columns:
-            max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
-            col_widths.append(min(max_len, 25))
-        total_width = sum(col_widths) * 0.15 + 2
+            max_len = max(
+                len(str(col)),
+                page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0
+            )
+            # batasi maksimal 22 karakter per kolom untuk tampilan rapat
+            col_widths.append(min(max_len, 20))
+        total_width = sum(col_widths) * 0.14 + 1.5
         fig_width = max(10, min(total_width, 18))
-        fig_height = max(4, page_n_rows * 0.38 + 2.8)
+        # tinggi figure sangat rapat
+        fig_height = max(3.5, page_n_rows * 0.32 + 2.2)
 
-        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='#FAFBFC')
+        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
         ax = fig.add_subplot(111)
         ax.axis('off')
-        ax.set_facecolor('#FAFBFC')
 
+        # Judul
         title_lines = [title]
         if last_update:
             title_lines.append(f"Last Update: {last_update}")
@@ -276,31 +283,38 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             total_pages = (n_rows - 1) // max_rows_per_page + 1
             title_lines.append(f"Halaman {page+1} dari {total_pages}")
 
-        y_title = 0.92
+        y_title = 0.94
         for i, line in enumerate(title_lines):
             if i == 0:
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
-                       fontsize=14, weight='bold', color='#1A3C5E')
+                        fontsize=12, weight='bold', color='#1A3C5E')
             else:
-                y_title -= 0.035
+                y_title -= 0.03
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
-                       fontsize=9, color='#5D6D7E', style='italic')
+                        fontsize=7.5, color='#5D6D7E', style='italic')
 
-        table = ax.table(cellText=page_df.values, colLabels=page_df.columns,
-                        cellLoc='center', loc='center',
-                        bbox=[0.03, 0.08, 0.94, 0.72])
+        # Tabel dengan margin minim
+        table = ax.table(
+            cellText=page_df.values,
+            colLabels=page_df.columns,
+            cellLoc='center',
+            loc='center',
+            bbox=[0.02, 0.06, 0.96, 0.75]  # hampir penuh
+        )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
 
+        # Header styling
         header_color = '#1A3C5E'
         for j in range(page_n_cols):
             cell = table[0, j]
             cell.set_facecolor(header_color)
             cell.set_text_props(color='white', weight='bold', fontsize=header_font_size)
             cell.set_edgecolor('#0F2A44')
-            cell.set_linewidth(0.8)
-            cell.set_height(0.06)
+            cell.set_linewidth(0.5)
+            cell.set_height(0.05)  # header pendek
 
+        # Body styling
         row_colors = ['#FFFFFF', '#F4F6F7']
         highlight_green = '#E8F8F5'
         highlight_red = '#FDEDEC'
@@ -343,8 +357,8 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 
             for j in range(page_n_cols):
                 cell = table[i, j]
-                cell.set_edgecolor('#D5D8DC')
-                cell.set_linewidth(0.4)
+                cell.set_edgecolor('#BDC3C7')
+                cell.set_linewidth(0.3)
                 if is_top:
                     cell.set_facecolor(highlight_green)
                 elif is_bottom:
@@ -352,15 +366,19 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
                 else:
                     cell.set_facecolor(row_colors[(i-1) % 2])
 
-        fig.text(0.5, 0.03, f"Total: {page_n_rows} toko", ha='center', fontsize=8.5, color='#95A5A6')
-        plt.tight_layout(rect=[0, 0.04, 1, 0.93], pad=0.5)
+        # Footer total toko
+        fig.text(0.5, 0.02, f"Total: {page_n_rows} toko", ha='center', fontsize=7, color='#7F8C8D')
+
+        # Simpan dengan kualitas tinggi dan minim padding
+        plt.tight_layout(rect=[0, 0.03, 1, 0.92], pad=0.1)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
-        plt.savefig(page_filename, format='jpg', dpi=200, bbox_inches='tight',
-                   facecolor=fig.get_facecolor(), edgecolor='none')
+        plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
+                    pad_inches=0.05, facecolor='white', edgecolor='none',
+                    pil_kwargs={'quality': 95, 'optimize': True})
         plt.close()
         files.append(page_filename)
-    return files
 
+    return files
 # -------------------------------------------------------------------
 # 6. State & handlers
 # -------------------------------------------------------------------
@@ -637,8 +655,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # 8. Main
 # -------------------------------------------------------------------
 def main():
-    logging.basicConfig(level=logging.INFO)
-    app = Application.builder().token(TOKEN).build()
+    request = HTTPXRequest(connect_timeout=30, read_timeout=60, write_timeout=60)
+    app = Application.builder().token(TOKEN).request(request).build()
 
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
