@@ -275,6 +275,7 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         ax = fig.add_subplot(111)
         ax.axis('off')
 
+        # Title lebih dekat ke atas, penurunan kecil
         title_lines = [title]
         if last_update:
             title_lines.append(f"Last Update: {last_update}")
@@ -282,22 +283,23 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             total_pages = (n_rows - 1) // max_rows_per_page + 1
             title_lines.append(f"Hal {page+1}/{total_pages}")
 
-        y_title = 0.96
+        y_title = 0.97          # mulai dari sangat atas
         for i, line in enumerate(title_lines):
             if i == 0:
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
                         fontsize=11, weight='bold', color='#1A3C5E')
             else:
-                y_title -= 0.025
+                y_title -= 0.02  # jarak antar baris title diperkecil
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
                         fontsize=6.5, color='#5D6D7E', style='italic')
 
+        # Tabel dengan bbox: [left, bottom, width, height] -> height 0.88 agar lebih tinggi
         table = ax.table(
             cellText=page_df.values,
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0.01, 0.05, 0.98, 0.85]
+            bbox=[0.01, 0.05, 0.98, 0.88]   # dinaikkan dari 0.85
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
@@ -355,7 +357,8 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 
         fig.text(0.5, 0.015, f"Total: {page_n_rows} toko", ha='center', fontsize=6.5, color='#7F8C8D')
 
-        plt.tight_layout(rect=[0, 0.02, 1, 0.94], pad=0.05)
+        # rect atas 0.96 agar title tidak terpotong, pad kecil
+        plt.tight_layout(rect=[0, 0.02, 1, 0.96], pad=0.05)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
                     pad_inches=0.03, facecolor='white', edgecolor='none',
@@ -364,7 +367,6 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         files.append(page_filename)
 
     return files
-
 # -------------------------------------------------------------------
 # 6. State & handlers
 # -------------------------------------------------------------------
