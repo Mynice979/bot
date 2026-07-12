@@ -275,7 +275,7 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         ax = fig.add_subplot(111)
         ax.axis('off')
 
-        # Title lebih dekat ke atas, penurunan kecil
+        # Title sangat dekat dengan tabel (mulai dari 0.98, penurunan kecil)
         title_lines = [title]
         if last_update:
             title_lines.append(f"Last Update: {last_update}")
@@ -283,23 +283,23 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             total_pages = (n_rows - 1) // max_rows_per_page + 1
             title_lines.append(f"Hal {page+1}/{total_pages}")
 
-        y_title = 0.97          # mulai dari sangat atas
+        y_title = 0.98
         for i, line in enumerate(title_lines):
             if i == 0:
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
                         fontsize=11, weight='bold', color='#1A3C5E')
             else:
-                y_title -= 0.02  # jarak antar baris title diperkecil
+                y_title -= 0.018
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
                         fontsize=6.5, color='#5D6D7E', style='italic')
 
-        # Tabel dengan bbox: [left, bottom, width, height] -> height 0.88 agar lebih tinggi
+        # Tabel: bottom dinaikkan menjadi 0.12 agar tabel lebih naik mendekati title
         table = ax.table(
             cellText=page_df.values,
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0.01, 0.05, 0.98, 0.88]   # dinaikkan dari 0.85
+            bbox=[0.01, 0.12, 0.98, 0.80]   # bottom lebih besar, height dikurangi sedikit
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
@@ -355,10 +355,10 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
                 else:
                     cell.set_facecolor(row_colors[(i-1) % 2])
 
-        fig.text(0.5, 0.015, f"Total: {page_n_rows} toko", ha='center', fontsize=6.5, color='#7F8C8D')
+        fig.text(0.5, 0.08, f"Total: {page_n_rows} toko", ha='center', fontsize=6.5, color='#7F8C8D')
 
-        # rect atas 0.96 agar title tidak terpotong, pad kecil
-        plt.tight_layout(rect=[0, 0.02, 1, 0.96], pad=0.05)
+        # rect atas 0.99, bawah 0.05 agar ruang title sempit
+        plt.tight_layout(rect=[0, 0.05, 1, 0.99], pad=0.05)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
                     pad_inches=0.03, facecolor='white', edgecolor='none',
