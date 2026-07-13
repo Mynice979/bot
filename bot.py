@@ -369,7 +369,9 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     """
-    Buat JPEG detail AM/AS gaya baru - versi rapat (tabel lebih dekat ke header).
+    Buat JPEG detail AM/AS dengan layout presisi:
+    - Banner navy, ringkasan, dan tabel mengisi penuh tanpa celah.
+    - Tabel dipaksa mengisi area yang dihitung via bbox=[0,0,1,1].
     """
     n_rows = len(df)
     files = []
@@ -415,12 +417,12 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         total_char_width = sum(col_widths_chars) * 0.14 + 2.0
         fig_width = max(11, min(total_char_width, 22))
 
-        # ---------- UKURAN BARU (lebih rapat) ----------
-        banner_height_in = 0.7          # lebih pendek
-        summary_height_in = 0.45        # lebih pendek
-        table_row_height_in = 0.34
-        top_pad_in = 0.05               # padding atas kecil
-        bottom_pad_in = 0.2             # footer kecil
+        # ---------- UKURAN PRESISI (tanpa padding tak berguna) ----------
+        banner_height_in = 0.7          # tinggi banner navy
+        summary_height_in = 0.3         # tinggi area ringkasan (cukup 3 baris)
+        table_row_height_in = 0.32      # tinggi per baris tabel
+        top_pad_in = 0.0                # tidak ada padding ekstra
+        bottom_pad_in = 0.08            # ruang footer kecil
 
         fig_height = (banner_height_in + summary_height_in + top_pad_in
                       + page_n_rows * table_row_height_in + bottom_pad_in)
@@ -432,19 +434,18 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         banner_frac = banner_height_in / fig_height
         summary_frac = summary_height_in / fig_height
 
-        # ===== 1. BANNER NAVY SOLID (lebih pendek) =====
+        # ===== 1. BANNER NAVY SOLID =====
         fig.add_artist(Rectangle(
             (0, 1 - banner_frac), 1, banner_frac,
             transform=fig.transFigure, facecolor='#1A3C5E', edgecolor='none', zorder=0
         ))
-        # Teks di banner disesuaikan posisinya
         fig.text(left_margin, 1 - banner_frac * 0.35, title,
                   ha='left', va='center', fontsize=14, weight='bold', color='white')
         fig.text(left_margin, 1 - banner_frac * 0.75, f"Last Update: {last_update}",
                   ha='left', va='center', fontsize=9, color='white')
 
-        # ===== 2. BARIS RINGKASAN (lebih dekat ke banner) =====
-        summary_top = 1 - banner_frac - 0.01   # jarak kecil dari banner
+        # ===== 2. BARIS RINGKASAN =====
+        summary_top = 1 - banner_frac - 0.01
         line_gap = summary_frac / 3.2
         fig.text(left_margin, summary_top, f"Target : {summary['total_target']:.0f}",
                   ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
@@ -455,7 +456,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         fig.text(right_margin, summary_top, f"Jumlah Toko : {summary['jumlah_toko']}",
                   ha='right', va='top', fontsize=9, weight='bold', color='#1A1A1A')
 
-        # ===== 3. TABEL (mulai tepat di bawah ringkasan) =====
+        # ===== 3. TABEL (mengisi penuh area yang dihitung) =====
         table_top = 1 - banner_frac - summary_frac - 0.02
         table_bottom = bottom_pad_in / fig_height * 0.4
         table_height = table_top - table_bottom
@@ -470,10 +471,11 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             cellLoc='center',
             loc='center',
             colWidths=col_widths,
+            bbox=[0, 0, 1, 1]          # <-- KUNCI: tabel mengisi penuh area ax
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
-        # table.scale(1, 1.35)
+        # table.scale(1, 1.35)   <-- DIHAPUS, karena bbox sudah mengatur tinggi
 
         n_cols = len(page_df.columns)
 
@@ -508,7 +510,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         files.append(page_filename)
 
     return files
-
 # -------------------------------------------------------------------
 # 7. State & handlers
 # -------------------------------------------------------------------
