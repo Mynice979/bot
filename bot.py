@@ -720,16 +720,21 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     }
                     col_names = ['Kode Toko', 'Nama Toko', 'AM', 'Type Modul', 'Target', 'Realtime', 'Selisih (+/-)', 'ACH']
 
-                detail_df = group[list(display_cols.values())].copy()
-                detail_df.columns = col_names
+                # Ambil 7 kolom asli
+                raw_df = group[list(display_cols.values())].copy()
+                # Konversi numerik
+                target_num = pd.to_numeric(raw_df[MASTER_COLS['target']], errors='coerce').fillna(0)
+                realtime_num = pd.to_numeric(raw_df[MASTER_COLS['realtime']], errors='coerce').fillna(0)
+                ach_num = pd.to_numeric(raw_df[MASTER_COLS['ach']], errors='coerce').fillna(0)
+                # Tambah kolom Selisih
+                raw_df['Selisih'] = realtime_num - target_num
+                # Sekarang 8 kolom, bisa ganti nama
+                raw_df.columns = col_names
+                detail_df = raw_df
 
-                detail_df['Target'] = pd.to_numeric(detail_df['Target'], errors='coerce').fillna(0)
-                detail_df['Realtime'] = pd.to_numeric(detail_df['Realtime'], errors='coerce').fillna(0)
-                detail_df['Selisih (+/-)'] = detail_df['Realtime'] - detail_df['Target']
-                detail_df['ACH'] = pd.to_numeric(detail_df['ACH'], errors='coerce').fillna(0)
-
-                total_target = detail_df['Target'].sum()
-                total_realtime = detail_df['Realtime'].sum()
+                # Summary
+                total_target = target_num.sum()
+                total_realtime = realtime_num.sum()
                 ach_total = (total_realtime / total_target * 100) if total_target > 0 else 0
                 summary = {
                     'total_target': total_target,
@@ -737,6 +742,7 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'ach_total': ach_total
                 }
 
+                # Format tampilan
                 detail_df['Target'] = detail_df['Target'].apply(lambda x: f"{x:.0f}")
                 detail_df['Realtime'] = detail_df['Realtime'].apply(lambda x: f"{x:.0f}")
                 detail_df['Selisih (+/-)'] = detail_df['Selisih (+/-)'].apply(lambda x: f"{x:+.0f}")
