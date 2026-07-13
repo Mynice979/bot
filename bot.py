@@ -367,21 +367,12 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # -------------------------------------------------------------------
 # 6. JPEG detail AM/AS dengan header laporan
 # -------------------------------------------------------------------
-def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_per_page=80,
-                        col_width_weights=None):
+def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     """
-    Membuat JPEG report tabel sesuai gaya "REPORT AREA - FRIED CHICKEN":
-    - Banner navy solid di atas berisi judul + jam
+    Membuat JPEG report tabel gaya baru:
+    - Banner navy solid di atas berisi judul + last update
     - Baris ringkasan (Target/Realtime/ACH Total di kiri, Jumlah Toko di kanan)
     - Tabel dengan header abu-abu terang, baris selang-seling putih/biru muda
-
-    Params:
-        df       : DataFrame data toko (tanpa kolom 'No', akan ditambahkan otomatis)
-        title    : judul report, mis. "REPORT AREA JLE - FRIED CHICKEN"
-        jam      : string jam, mis. "16.00"
-        summary  : dict berisi 'total_target', 'total_realtime', 'ach_total', 'jumlah_toko'
-        filename : nama file dasar
-        max_rows_per_page : jumlah baris maksimal per halaman
     """
     n_rows = len(df)
     files = []
@@ -389,17 +380,14 @@ def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_pe
     df = df.reset_index(drop=True)
     df.insert(0, 'No', range(1, len(df) + 1))
 
-    # kolom yang rata kiri (selain itu rata tengah)
-    left_align_cols = {'TOKO'}
-
-    # bobot lebar relatif tiap kolom -- angka lebih besar = kolom lebih lebar.
-    # Ubah angka 'TOKO' di sini kalau ingin lebih lebar/sempit lagi.
+    # Bobot lebar kolom relatif
     default_weights = {
-        'No': 0.5, 'KDTK': 0.9, 'TOKO': 3.0, 'AS': 0.6,
-        'TYPE': 1.6, 'Target': 0.9, 'Realtime': 1.0, '+/-': 0.8, 'ACH': 0.8,
+        'No': 0.5, 'Kode Toko': 0.9, 'Nama Toko': 3.0, 'AS': 0.6,
+        'Type': 1.6, 'Target': 0.9, 'Realtime': 1.0, '+/-': 0.8, 'ACH': 0.8,
     }
-    if col_width_weights:
-        default_weights.update(col_width_weights)
+    # Jika detail AS, tambahkan kolom AM
+    if 'AM' in df.columns:
+        default_weights['AM'] = 0.6
     weights = [default_weights.get(col, 1.0) for col in df.columns]
     total_weight = sum(weights)
     col_widths = [w / total_weight for w in weights]
@@ -409,7 +397,7 @@ def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_pe
         page_df = df.iloc[start:end]
         page_n_rows = len(page_df)
 
-        # ----- Ukuran font dinamis -----
+        # Ukuran font dinamis
         if page_n_rows > 50:
             font_size = 6.5
             header_font_size = 7.0
@@ -423,7 +411,7 @@ def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_pe
             font_size = 10.0
             header_font_size = 10.5
 
-        # ----- Lebar figure -----
+        # Lebar figure
         col_widths_chars = []
         for col in page_df.columns:
             max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
@@ -431,8 +419,8 @@ def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_pe
         total_char_width = sum(col_widths_chars) * 0.14 + 2.0
         fig_width = max(11, min(total_char_width, 22))
 
-        banner_height_in = 0.95          # tinggi banner navy (inch)
-        summary_height_in = 0.55         # tinggi baris ringkasan (inch)
+        banner_height_in = 0.95
+        summary_height_in = 0.55
         table_row_height_in = 0.34
         top_pad_in = 0.15
         bottom_pad_in = 0.35
@@ -454,10 +442,10 @@ def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_pe
         ))
         fig.text(left_margin, 1 - banner_frac * 0.38, title,
                   ha='left', va='center', fontsize=15, weight='bold', color='white')
-        fig.text(left_margin, 1 - banner_frac * 0.78, f"Jam: {jam}",
+        fig.text(left_margin, 1 - banner_frac * 0.78, f"Last Update: {last_update}",
                   ha='left', va='center', fontsize=10, color='white')
 
-        # ===== 2. BARIS RINGKASAN (kiri: target/realtime/ach, kanan: jumlah toko) =====
+        # ===== 2. BARIS RINGKASAN =====
         summary_top = 1 - banner_frac - 0.015
         line_gap = summary_frac / 3.2
         fig.text(left_margin, summary_top, f"Target : {summary['total_target']:.0f}",
@@ -491,17 +479,15 @@ def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_pe
 
         n_cols = len(page_df.columns)
 
-        # ----- Header tabel: abu-abu terang, teks hitam tebal -----
+        # Header tabel: abu-abu terang, teks hitam tebal
         for j in range(n_cols):
             cell = table[0, j]
             cell.set_facecolor('#EAEAEA')
             cell.set_text_props(color='#1A1A1A', weight='bold', fontsize=header_font_size)
             cell.set_edgecolor('#B0B0B0')
             cell.set_linewidth(0.8)
-            col_name = page_df.columns[j]
-            cell.set_text_props(ha='left' if col_name in left_align_cols else 'center')
 
-        # ----- Baris data: selang-seling putih & biru sangat muda -----
+        # Baris data: selang-seling putih & biru muda
         row_colors = ['#FFFFFF', '#F0F4FA']
         for i in range(1, page_n_rows + 1):
             for j in range(n_cols):
@@ -509,14 +495,9 @@ def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_pe
                 cell.set_facecolor(row_colors[(i - 1) % 2])
                 cell.set_edgecolor('#D0D5DD')
                 cell.set_linewidth(0.4)
-                col_name = page_df.columns[j]
-                cell.set_text_props(
-                    color='#2C3E50',
-                    ha='left' if col_name in left_align_cols else 'center',
-                    weight='bold' if col_name == 'TOKO' else 'normal'
-                )
+                cell.set_text_props(color='#2C3E50')
 
-        # garis tebal navy di bawah header (pemisah header vs body)
+        # Garis tebal navy di bawah header
         for j in range(n_cols):
             table[0, j].set_edgecolor('#1A3C5E')
             table[0, j].set_linewidth(1.2)
@@ -529,7 +510,6 @@ def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_pe
         files.append(page_filename)
 
     return files
-
 
 if __name__ == '__main__':
     import pandas as pd
@@ -800,79 +780,59 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bio.seek(0)
             await query.message.reply_document(document=bio, filename=filename, caption=f"Detail per {col.upper()} - {MODUL_LABEL[mod]['label']} (Excel)")
         else:
-            # VERSI JPEG DETAIL AM/AS
             last_update = context.user_data.get(f'{mod}_last', '')
             for name, group in sorted_df.groupby(col):
-                # Siapkan dataframe dengan kolom yang diminta
                 if 'am' in opt:
-                    # Detail AM -> tampilkan: Kode Toko, Nama Toko, AS, Type Modul, Target, Realtime, Selisih, ACH
-                    display_cols = [
-                        MASTER_COLS['kode_toko'],
-                        MASTER_COLS['nama_toko'],
-                        MASTER_COLS['as'],
-                        MASTER_COLS['type_col'],
-                        MASTER_COLS['target'],
-                        MASTER_COLS['realtime'],
-                        MASTER_COLS['ach']
-                    ]
-                    col_names = ['Kode Toko', 'Nama Toko', 'AS', 'Type Modul', 'Target', 'Realtime', 'Selisih (+/-)', 'ACH']
+                    display_cols = {
+                        'Kode Toko': MASTER_COLS['kode_toko'],
+                        'Nama Toko': MASTER_COLS['nama_toko'],
+                        'AS': MASTER_COLS['as'],
+                        'Type': MASTER_COLS['type_col'],
+                        'Target': MASTER_COLS['target'],
+                        'Realtime': MASTER_COLS['realtime'],
+                        'ACH': MASTER_COLS['ach']
+                    }
+                    col_order = ['Kode Toko', 'Nama Toko', 'AS', 'Type', 'Target', 'Realtime', '+/-', 'ACH']
                 else:
-                    # Detail AS -> tampilkan: Kode Toko, Nama Toko, AM, AS, Type Modul, Target, Realtime, Selisih, ACH
-                    display_cols = [
-                        MASTER_COLS['kode_toko'],
-                        MASTER_COLS['nama_toko'],
-                        MASTER_COLS['am'],
-                        MASTER_COLS['as'],
-                        MASTER_COLS['type_col'],
-                        MASTER_COLS['target'],
-                        MASTER_COLS['realtime'],
-                        MASTER_COLS['ach']
-                    ]
-                    col_names = ['Kode Toko', 'Nama Toko', 'AM', 'AS', 'Type Modul', 'Target', 'Realtime', 'Selisih (+/-)', 'ACH']
+                    display_cols = {
+                        'Kode Toko': MASTER_COLS['kode_toko'],
+                        'Nama Toko': MASTER_COLS['nama_toko'],
+                        'AM': MASTER_COLS['am'],
+                        'AS': MASTER_COLS['as'],
+                        'Type': MASTER_COLS['type_col'],
+                        'Target': MASTER_COLS['target'],
+                        'Realtime': MASTER_COLS['realtime'],
+                        'ACH': MASTER_COLS['ach']
+                    }
+                    col_order = ['Kode Toko', 'Nama Toko', 'AM', 'AS', 'Type', 'Target', 'Realtime', '+/-', 'ACH']
 
-                # Ambil data mentah
-                raw_df = group[display_cols].copy()
+                raw_df = group[list(display_cols.values())].copy()
+                raw_df.columns = list(display_cols.keys())
 
-                # Konversi numerik
-                target_num = pd.to_numeric(raw_df[MASTER_COLS['target']], errors='coerce').fillna(0)
-                realtime_num = pd.to_numeric(raw_df[MASTER_COLS['realtime']], errors='coerce').fillna(0)
-                ach_num = pd.to_numeric(raw_df[MASTER_COLS['ach']], errors='coerce').fillna(0)
-
-                # Hitung selisih
+                target_num = pd.to_numeric(raw_df['Target'], errors='coerce').fillna(0)
+                realtime_num = pd.to_numeric(raw_df['Realtime'], errors='coerce').fillna(0)
+                ach_num = pd.to_numeric(raw_df['ACH'], errors='coerce').fillna(0)
                 selisih = realtime_num - target_num
 
-                # Buat dataframe final dengan kolom yang sudah diformat
-                detail_data = {
-                    'Kode Toko': raw_df[MASTER_COLS['kode_toko']].values,
-                    'Nama Toko': raw_df[MASTER_COLS['nama_toko']].values,
-                }
-                if 'am' in opt:
-                    detail_data['AS'] = raw_df[MASTER_COLS['as']].values
-                else:
-                    detail_data['AM'] = raw_df[MASTER_COLS['am']].values
-                    detail_data['AS'] = raw_df[MASTER_COLS['as']].values
+                raw_df['+/-'] = [f"{int(x)}" if x >= 0 else f"{int(x)}" for x in selisih]
+                raw_df['Target'] = [f"{x:.0f}" for x in target_num]
+                raw_df['Realtime'] = [f"{x:.0f}" for x in realtime_num]
+                raw_df['ACH'] = [f"{x:.1f}%" for x in ach_num]
 
-                detail_data['Type Modul'] = raw_df[MASTER_COLS['type_col']].values
-                detail_data['Target'] = [f"{x:.0f}" for x in target_num]
-                detail_data['Realtime'] = [f"{x:.0f}" for x in realtime_num]
-                # Format selisih: >=0 tanpa tanda, <0 dengan minus
-                detail_data['Selisih (+/-)'] = [f"{int(x)}" if x >= 0 else f"{int(x)}" for x in selisih]
-                detail_data['ACH'] = [f"{x:.1f}%" for x in ach_num]
+                detail_df = raw_df[col_order]
 
-                detail_df = pd.DataFrame(detail_data, columns=col_names)
-
-                # Summary
                 total_target = target_num.sum()
                 total_realtime = realtime_num.sum()
                 ach_total = (total_realtime / total_target * 100) if total_target > 0 else 0
                 summary = {
                     'total_target': total_target,
                     'total_realtime': total_realtime,
-                    'ach_total': ach_total
+                    'ach_total': ach_total,
+                    'jumlah_toko': len(detail_df)
                 }
 
                 unit_type = 'AM' if 'am' in opt else 'AS'
-                title = f"REPORT AREA ({unit_type} {name}) - {MODUL_LABEL[mod]['label']}"
+                title = f"REPORT AREA {unit_type} {name} - {MODUL_LABEL[mod]['label']}"
 
                 img_files = create_detail_jpeg(
                     detail_df, title, last_update, summary,
@@ -884,7 +844,8 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     media = [InputMediaPhoto(open(f, 'rb')) for f in img_files]
                     await query.message.reply_media_group(media=media)
                 for f in img_files:
-                    os.remove(f)
+                    os.remove(f)                    
+                    
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
              InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
