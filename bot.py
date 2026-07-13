@@ -369,9 +369,7 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     """
-    Buat JPEG detail AM/AS dengan layout presisi:
-    - Banner navy, ringkasan, dan tabel mengisi penuh tanpa celah.
-    - Tabel dipaksa mengisi area yang dihitung via bbox=[0,0,1,1].
+    Buat JPEG detail AM/AS dengan ringkasan horizontal.
     """
     n_rows = len(df)
     files = []
@@ -417,12 +415,12 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         total_char_width = sum(col_widths_chars) * 0.14 + 2.0
         fig_width = max(11, min(total_char_width, 22))
 
-        # ---------- UKURAN PRESISI (tanpa padding tak berguna) ----------
-        banner_height_in = 0.7          # tinggi banner navy
-        summary_height_in = 0.3         # tinggi area ringkasan (cukup 3 baris)
-        table_row_height_in = 0.32      # tinggi per baris tabel
-        top_pad_in = 0.0                # tidak ada padding ekstra
-        bottom_pad_in = 0.08            # ruang footer kecil
+        # ---------- UKURAN PRESISI ----------
+        banner_height_in = 0.7
+        summary_height_in = 0.25        # lebih kecil, cukup satu baris
+        table_row_height_in = 0.32
+        top_pad_in = 0.0
+        bottom_pad_in = 0.08
 
         fig_height = (banner_height_in + summary_height_in + top_pad_in
                       + page_n_rows * table_row_height_in + bottom_pad_in)
@@ -444,17 +442,17 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         fig.text(left_margin, 1 - banner_frac * 0.75, f"Last Update: {last_update}",
                   ha='left', va='center', fontsize=9, color='white')
 
-        # ===== 2. BARIS RINGKASAN =====
-        summary_top = 1 - banner_frac - 0.01
-        line_gap = summary_frac / 3.2
-        fig.text(left_margin, summary_top, f"Target : {summary['total_target']:.0f}",
+        # ===== 2. BARIS RINGKASAN HORIZONTAL =====
+        summary_text = (
+            f"Target: {summary['total_target']:.0f}    "
+            f"Realtime: {summary['total_realtime']:.0f}    "
+            f"ACH Total: {summary['ach_total']:.2f}%    "
+            f"Jumlah Toko: {summary['jumlah_toko']}"
+        )
+        # Posisi tepat di bawah banner
+        summary_y = 1 - banner_frac - 0.01
+        fig.text(left_margin, summary_y, summary_text,
                   ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
-        fig.text(left_margin, summary_top - line_gap, f"Realtime : {summary['total_realtime']:.0f}",
-                  ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
-        fig.text(left_margin, summary_top - 2 * line_gap, f"ACH Total : {summary['ach_total']:.2f}",
-                  ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
-        fig.text(right_margin, summary_top, f"Jumlah Toko : {summary['jumlah_toko']}",
-                  ha='right', va='top', fontsize=9, weight='bold', color='#1A1A1A')
 
         # ===== 3. TABEL (mengisi penuh area yang dihitung) =====
         table_top = 1 - banner_frac - summary_frac - 0.02
@@ -471,11 +469,10 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             cellLoc='center',
             loc='center',
             colWidths=col_widths,
-            bbox=[0, 0, 1, 1]          # <-- KUNCI: tabel mengisi penuh area ax
+            bbox=[0, 0, 1, 1]
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
-        # table.scale(1, 1.35)   <-- DIHAPUS, karena bbox sudah mengatur tinggi
 
         n_cols = len(page_df.columns)
 
