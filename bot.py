@@ -369,10 +369,7 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     """
-    Buat JPEG detail AM/AS gaya baru:
-    - Banner navy solid di atas berisi judul + last update
-    - Baris ringkasan (Target/Realtime/ACH Total di kiri, Jumlah Toko di kanan)
-    - Tabel dengan header abu-abu terang, baris selang-seling putih/biru muda
+    Buat JPEG detail AM/AS gaya baru - versi rapat (tabel lebih dekat ke header).
     """
     n_rows = len(df)
     files = []
@@ -418,11 +415,12 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         total_char_width = sum(col_widths_chars) * 0.14 + 2.0
         fig_width = max(11, min(total_char_width, 22))
 
-        banner_height_in = 0.95
-        summary_height_in = 0.55
+        # ---------- UKURAN BARU (lebih rapat) ----------
+        banner_height_in = 0.7          # lebih pendek
+        summary_height_in = 0.45        # lebih pendek
         table_row_height_in = 0.34
-        top_pad_in = 0.15
-        bottom_pad_in = 0.35
+        top_pad_in = 0.05               # padding atas kecil
+        bottom_pad_in = 0.2             # footer kecil
 
         fig_height = (banner_height_in + summary_height_in + top_pad_in
                       + page_n_rows * table_row_height_in + bottom_pad_in)
@@ -434,30 +432,31 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         banner_frac = banner_height_in / fig_height
         summary_frac = summary_height_in / fig_height
 
-        # ===== 1. BANNER NAVY SOLID =====
+        # ===== 1. BANNER NAVY SOLID (lebih pendek) =====
         fig.add_artist(Rectangle(
             (0, 1 - banner_frac), 1, banner_frac,
             transform=fig.transFigure, facecolor='#1A3C5E', edgecolor='none', zorder=0
         ))
-        fig.text(left_margin, 1 - banner_frac * 0.38, title,
-                  ha='left', va='center', fontsize=15, weight='bold', color='white')
-        fig.text(left_margin, 1 - banner_frac * 0.78, f"Last Update: {last_update}",
-                  ha='left', va='center', fontsize=10, color='white')
+        # Teks di banner disesuaikan posisinya
+        fig.text(left_margin, 1 - banner_frac * 0.35, title,
+                  ha='left', va='center', fontsize=14, weight='bold', color='white')
+        fig.text(left_margin, 1 - banner_frac * 0.75, f"Last Update: {last_update}",
+                  ha='left', va='center', fontsize=9, color='white')
 
-        # ===== 2. BARIS RINGKASAN =====
-        summary_top = 1 - banner_frac - 0.015
+        # ===== 2. BARIS RINGKASAN (lebih dekat ke banner) =====
+        summary_top = 1 - banner_frac - 0.01   # jarak kecil dari banner
         line_gap = summary_frac / 3.2
         fig.text(left_margin, summary_top, f"Target : {summary['total_target']:.0f}",
-                  ha='left', va='top', fontsize=9.5, weight='bold', color='#1A1A1A')
+                  ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
         fig.text(left_margin, summary_top - line_gap, f"Realtime : {summary['total_realtime']:.0f}",
-                  ha='left', va='top', fontsize=9.5, weight='bold', color='#1A1A1A')
+                  ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
         fig.text(left_margin, summary_top - 2 * line_gap, f"ACH Total : {summary['ach_total']:.2f}",
-                  ha='left', va='top', fontsize=9.5, weight='bold', color='#1A1A1A')
+                  ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
         fig.text(right_margin, summary_top, f"Jumlah Toko : {summary['jumlah_toko']}",
-                  ha='right', va='top', fontsize=9.5, weight='bold', color='#1A1A1A')
+                  ha='right', va='top', fontsize=9, weight='bold', color='#1A1A1A')
 
-        # ===== 3. TABEL =====
-        table_top = 1 - banner_frac - summary_frac - 0.01
+        # ===== 3. TABEL (mulai tepat di bawah ringkasan) =====
+        table_top = 1 - banner_frac - summary_frac - 0.02
         table_bottom = bottom_pad_in / fig_height * 0.4
         table_height = table_top - table_bottom
 
@@ -509,7 +508,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         files.append(page_filename)
 
     return files
-
 # -------------------------------------------------------------------
 # 7. State & handlers
 # -------------------------------------------------------------------
