@@ -4,7 +4,6 @@ import re
 import pickle
 import logging
 from io import BytesIO
-from collections import defaultdict
 
 import pandas as pd
 import numpy as np
@@ -391,8 +390,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
+    # Inisialisasi list untuk menampung multi input
+    context.user_data['sosis_list'] = []
+    context.user_data['ayam_list'] = []
+
     await update.message.reply_text(
-        "Kirim data HOT SAUSAGE (copy‑paste teks) atau ketik *skip* jika tidak ada."
+        "Kirim data HOT SAUSAGE (copy‑paste teks) atau ketik *skip* jika tidak ada.\n"
+        "Anda dapat mengirim beberapa kali. Setelah selesai, ketik **done**."
     )
     return WAITING_SOSIS
 
@@ -434,36 +438,76 @@ async def cancel_master_upload(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    text = update.message.text.strip()
     if text.lower() == 'skip':
         context.user_data['sosis_df'] = None
-        await update.message.reply_text("Data Sosis dilewati.\nSekarang kirim data FRIED CHICKEN (copy‑paste teks) atau ketik *skip*.")
+        context.user_data['sosis_list'] = []
+        await update.message.reply_text("Data Sosis dilewati.\nSekarang kirim data FRIED CHICKEN (copy‑paste teks) atau ketik *skip*.\nAnda dapat mengirim beberapa kali, ketik **done** jika selesai.")
         return WAITING_AYAM
+
+    if text.lower() == 'done':
+        # Gabungkan semua data Sosis yang terkumpul
+        sosis_list = context.user_data.get('sosis_list', [])
+        if sosis_list:
+            context.user_data['sosis_df'] = pd.concat(sosis_list, ignore_index=True)
+        else:
+            context.user_data['sosis_df'] = None
+        await update.message.reply_text(
+            "Data Sosis selesai.\nSekarang kirim data FRIED CHICKEN (copy‑paste teks) atau ketik *skip*.\nAnda dapat mengirim beberapa kali, ketik **done** jika selesai."
+        )
+        return WAITING_AYAM
+
+    # Parse teks yang dikirim
     df_trans, modul, info = parse_laporan_text(text)
     if df_trans is None or modul != 'HOT SAUSAGE':
-        await update.message.reply_text(f"Gagal: {info}\nPastikan teks mengandung 'HOT SAUSAGE'. Coba lagi atau ketik *skip*.")
+        await update.message.reply_text(f"Gagal: {info}\nPastikan teks mengandung 'HOT SAUSAGE'. Coba lagi atau ketik *skip* / *done*.")
         return WAITING_SOSIS
-    context.user_data['sosis_df'] = df_trans
-    context.user_data['sosis_last'] = info
-    await update.message.reply_text("Data Sosis diterima.\nSekarang kirim data FRIED CHICKEN (copy‑paste teks) atau ketik *skip*.")
-    return WAITING_AYAM
+
+    # Simpan ke list
+    context.user_data.setdefault('sosis_list', []).append(df_trans)
+    # Update last_update jika ada
+    if info and isinstance(info, str):
+        context.user_data['sosis_last'] = info
+
+    cnt = len(context.user_data['sosis_list'])
+    await update.message.reply_text(f"Data Sosis ke-{cnt} disimpan. Kirim lagi atau ketik *done* untuk selesai.")
+    return WAITING_SOSIS
 
 async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    text = update.message.text.strip()
     if text.lower() == 'skip':
         context.user_data['ayam_df'] = None
-    else:
-        df_trans, modul, info = parse_laporan_text(text)
-        if df_trans is None or modul != 'FRIED CHICKEN':
-            await update.message.reply_text(f"Gagal: {info}\nPastikan teks mengandung 'FRIED CHICKEN'. Coba lagi atau ketik *skip*.")
-            return WAITING_AYAM
-        context.user_data['ayam_df'] = df_trans
+        context.user_data['ayam_list'] = []
+        return await process_data(update, context)
+
+    if text.lower() == 'done':
+        ayam_list = context.user_data.get('ayam_list', [])
+        if ayam_list:
+            context.user_data['ayam_df'] = pd.concat(ayam_list, ignore_index=True)
+        else:
+            context.user_data['ayam_df'] = None
+        return await process_data(update, context)
+
+    df_trans, modul, info = parse_laporan_text(text)
+    if df_trans is None or modul != 'FRIED CHICKEN':
+        await update.message.reply_text(f"Gagal: {info}\nPastikan teks mengandung 'FRIED CHICKEN'. Coba lagi atau ketik *skip* / *done*.")
+        return WAITING_AYAM
+
+    context.user_data.setdefault('ayam_list', []).append(df_trans)
+    if info and isinstance(info, str):
         context.user_data['ayam_last'] = info
 
+    cnt = len(context.user_data['ayam_list'])
+    await update.message.reply_text(f"Data Ayam ke-{cnt} disimpan. Kirim lagi atau ketik *done* untuk selesai.")
+    return WAITING_AYAM
+
+async def process_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Proses kedua modul dan tampilkan ringkasan."""
     master = context.user_data['master']
     summaries = []
     available_moduls = []
 
+    # Proses Sosis
     if context.user_data.get('sosis_df') is not None:
         try:
             merged_sosis = merge_and_calc(master, context.user_data['sosis_df'], MASTER_COLS['type_sosis'])
@@ -473,6 +517,7 @@ async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"Peringatan (Sosis): {e}")
 
+    # Proses Ayam
     if context.user_data.get('ayam_df') is not None:
         try:
             merged_ayam = merge_and_calc(master, context.user_data['ayam_df'], MASTER_COLS['type_ayam'])
