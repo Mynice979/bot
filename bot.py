@@ -227,7 +227,7 @@ def df_summary(df, modul_name):
     return html
 
 # -------------------------------------------------------------------
-# 5. JPEG detail AM/AS dengan banner navy + ringkasan horizontal
+# 5. JPEG detail (banner navy, ringkasan horizontal, tabel presisi)
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     n_rows = len(df)
@@ -674,120 +674,110 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # ---- Opsi 5 & 6: minta input AM ----
+    # ---- Opsi 5 & 6: langsung proses semua AM ----
     elif opt in ['top10_am', 'no_realtime_am']:
-        context.user_data['selected_opt'] = opt
-        context.user_data['awaiting_code'] = True
-        await query.edit_message_text("Masukkan kode AM:")
+        merged = context.user_data.get(f'merged_{mod}')
+        if merged is None:
+            await query.edit_message_text("Data tidak tersedia.")
+            return
+
+        last_update = context.user_data.get(f'{mod}_last', '')
+        am_list = merged[MASTER_COLS['am']].unique()
+
+        media_groups = []
+        temp_files = []
+
+        for am_code in am_list:
+            group = merged[merged[MASTER_COLS['am']] == am_code]
+
+            if opt == 'top10_am':
+                # 10 toko realtime tertinggi (hanya yang memiliki realtime)
+                group = group[group[MASTER_COLS['realtime']].notna()]
+                if group.empty:
+                    continue
+                sorted_group = group.sort_values(by=MASTER_COLS['realtime'], ascending=False).head(10)
+                title = f"Top 10 Toko - AM {am_code} - {MODUL_LABEL[mod]['label']}"
+            else:  # no_realtime_am
+                # toko yang realtime-nya kosong (NaN) ATAU 0
+                group = group[(group[MASTER_COLS['realtime']].isna()) | (group[MASTER_COLS['realtime']] == 0)]
+                if group.empty:
+                    continue
+                sorted_group = group
+                title = f"Toko Tanpa Realtime - AM {am_code} - {MODUL_LABEL[mod]['label']}"
+
+            # Gunakan kolom yang sama dengan Detail per AM
+            display_cols = {
+                'Kode Toko': MASTER_COLS['kode_toko'],
+                'Nama Toko': MASTER_COLS['nama_toko'],
+                'AS': MASTER_COLS['as'],
+                'Type': MASTER_COLS['type_col'],
+                'Target': MASTER_COLS['target'],
+                'Realtime': MASTER_COLS['realtime'],
+                'ACH': MASTER_COLS['ach']
+            }
+            col_order = ['Kode Toko', 'Nama Toko', 'AS', 'Type', 'Target', 'Realtime', '+/-', 'ACH']
+
+            raw_df = sorted_group[list(display_cols.values())].copy()
+            raw_df.columns = list(display_cols.keys())
+            raw_df['Type'] = raw_df['Type'].replace('SOSIS', 'HOT SAUSAGE')
+
+            target_num = pd.to_numeric(raw_df['Target'], errors='coerce').fillna(0)
+            realtime_num = pd.to_numeric(raw_df['Realtime'], errors='coerce').fillna(0)
+            ach_num = pd.to_numeric(raw_df['ACH'], errors='coerce').fillna(0)
+            selisih = realtime_num - target_num
+
+            raw_df['+/-'] = [f"{int(x)}" if x >= 0 else f"{int(x)}" for x in selisih]
+            raw_df['Target'] = [f"{x:.0f}" for x in target_num]
+            raw_df['Realtime'] = [f"{x:.0f}" for x in realtime_num]
+            raw_df['ACH'] = [f"{x:.1f}%" for x in ach_num]
+
+            detail_df = raw_df[col_order]
+
+            total_target = target_num.sum()
+            total_realtime = realtime_num.sum()
+            ach_total = (total_realtime / total_target * 100) if total_target > 0 else 0
+            summary = {
+                'total_target': total_target,
+                'total_realtime': total_realtime,
+                'ach_total': ach_total,
+                'jumlah_toko': len(detail_df)
+            }
+
+            img_files = create_detail_jpeg(detail_df, title, last_update, summary, max_rows_per_page=80)
+            for f in img_files:
+                temp_files.append(f)
+                media_groups.append(InputMediaPhoto(open(f, 'rb')))
+
+        if media_groups:
+            # Kirim dalam grup 10 media per pesan (batas Telegram)
+            for i in range(0, len(media_groups), 10):
+                chunk = media_groups[i:i+10]
+                await query.message.reply_media_group(media=chunk)
+            # Hapus file temporer
+            for f in temp_files:
+                if os.path.exists(f):
+                    os.remove(f)
+        else:
+            await query.edit_message_text("Tidak ada data untuk ditampilkan.")
+
+        # Kembalikan keyboard
+        keyboard = [
+            [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
+             InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
+            [InlineKeyboardButton("3. Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
+             InlineKeyboardButton("4. Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
+            [InlineKeyboardButton("5. Top 10 Toko Teratas by AM", callback_data="opt:top10_am")],
+            [InlineKeyboardButton("6. Toko Tidak Ada Realtime per AM", callback_data="opt:no_realtime_am")],
+            [InlineKeyboardButton("Kembali", callback_data="back_to_modul")],
+        ]
+        await query.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     else:
         await query.edit_message_text("Opsi tidak dikenal.")
 
 # -------------------------------------------------------------------
-# 8. Handler penerima kode AM (untuk opsi 5 & 6)
+# 8. Error handler
 # -------------------------------------------------------------------
-async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get('awaiting_code'):
-        return
-    text = update.message.text.strip()
-    mod = context.user_data.get('selected_modul')
-    opt = context.user_data.get('selected_opt')
-    if not mod or not opt:
-        await update.message.reply_text("Sesi habis, /start ulang.")
-        context.user_data.pop('awaiting_code', None)
-        return
-
-    merged = context.user_data.get(f'merged_{mod}')
-    if merged is None:
-        await update.message.reply_text("Data tidak tersedia.")
-        context.user_data.pop('awaiting_code', None)
-        return
-
-    col = MASTER_COLS['am']
-    if text not in merged[col].values:
-        await update.message.reply_text(f"Kode AM '{text}' tidak ditemukan. Coba lagi:")
-        return
-
-    filtered = merged[merged[col] == text]
-    last_update = context.user_data.get(f'{mod}_last', '')
-
-    if opt == 'top10_am':
-        # 10 toko dengan realtime tertinggi
-        sorted_df = filtered.sort_values(by=MASTER_COLS['realtime'], ascending=False).head(10)
-        title = f"Top 10 Toko - AM {text} - {MODUL_LABEL[mod]['label']}"
-    elif opt == 'no_realtime_am':
-        # Toko tanpa realtime
-        sorted_df = filtered[filtered[MASTER_COLS['realtime']].isna()]
-        title = f"Toko Tanpa Realtime - AM {text} - {MODUL_LABEL[mod]['label']}"
-    else:
-        await update.message.reply_text("Opsi tidak dikenal.")
-        context.user_data.pop('awaiting_code', None)
-        return
-
-    if sorted_df.empty:
-        await update.message.reply_text("Tidak ada data untuk ditampilkan.")
-        context.user_data.pop('awaiting_code', None)
-        return
-
-    # Gunakan kolom yang sama dengan Detail per AM
-    display_cols = {
-        'Kode Toko': MASTER_COLS['kode_toko'],
-        'Nama Toko': MASTER_COLS['nama_toko'],
-        'AS': MASTER_COLS['as'],
-        'Type': MASTER_COLS['type_col'],
-        'Target': MASTER_COLS['target'],
-        'Realtime': MASTER_COLS['realtime'],
-        'ACH': MASTER_COLS['ach']
-    }
-    col_order = ['Kode Toko', 'Nama Toko', 'AS', 'Type', 'Target', 'Realtime', '+/-', 'ACH']
-
-    raw_df = sorted_df[list(display_cols.values())].copy()
-    raw_df.columns = list(display_cols.keys())
-    raw_df['Type'] = raw_df['Type'].replace('SOSIS', 'HOT SAUSAGE')
-
-    target_num = pd.to_numeric(raw_df['Target'], errors='coerce').fillna(0)
-    realtime_num = pd.to_numeric(raw_df['Realtime'], errors='coerce').fillna(0)
-    ach_num = pd.to_numeric(raw_df['ACH'], errors='coerce').fillna(0)
-    selisih = realtime_num - target_num
-
-    raw_df['+/-'] = [f"{int(x)}" if x >= 0 else f"{int(x)}" for x in selisih]
-    raw_df['Target'] = [f"{x:.0f}" for x in target_num]
-    raw_df['Realtime'] = [f"{x:.0f}" for x in realtime_num]
-    raw_df['ACH'] = [f"{x:.1f}%" for x in ach_num]
-
-    detail_df = raw_df[col_order]
-
-    total_target = target_num.sum()
-    total_realtime = realtime_num.sum()
-    ach_total = (total_realtime / total_target * 100) if total_target > 0 else 0
-    summary = {
-        'total_target': total_target,
-        'total_realtime': total_realtime,
-        'ach_total': ach_total,
-        'jumlah_toko': len(detail_df)
-    }
-
-    img_files = create_detail_jpeg(detail_df, title, last_update, summary, max_rows_per_page=80)
-    if len(img_files) == 1:
-        await update.message.reply_photo(photo=open(img_files[0], 'rb'), caption=title[:1024])
-    else:
-        media = [InputMediaPhoto(open(f, 'rb')) for f in img_files]
-        await update.message.reply_media_group(media=media)
-    for f in img_files:
-        os.remove(f)
-
-    context.user_data.pop('awaiting_code', None)
-    keyboard = [
-        [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
-         InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
-        [InlineKeyboardButton("3. Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
-         InlineKeyboardButton("4. Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
-        [InlineKeyboardButton("5. Top 10 Toko Teratas by AM", callback_data="opt:top10_am")],
-        [InlineKeyboardButton("6. Toko Tidak Ada Realtime per AM", callback_data="opt:no_realtime_am")],
-        [InlineKeyboardButton("Kembali", callback_data="back_to_modul")],
-    ]
-    await update.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
-
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
@@ -822,7 +812,7 @@ def main():
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(modul_selected, pattern='^mod:'))
     app.add_handler(CallbackQueryHandler(option_selected, pattern='^opt:|^back_to_modul'))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_code))
+    # Tidak perlu receive_code lagi
     app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text(
         "/start - Mulai input data penjualan (Sosis & Ayam)\n"
         "/upload_struktur_master - Upload file master toko (.xlsx)\n"
