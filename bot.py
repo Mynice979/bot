@@ -367,23 +367,18 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # 6. JPEG detail AM/AS dengan header laporan
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
-    """
-    Buat JPEG detail AM/AS dengan header ringkas di atas dan tabel rapat di bawah.
-    """
     n_rows = len(df)
     files = []
 
-    # Tambahkan kolom No di posisi pertama
     df = df.reset_index(drop=True)
     df.insert(0, 'No', range(1, len(df) + 1))
-    n_cols = df.shape[1]
 
     for page, start in enumerate(range(0, n_rows, max_rows_per_page)):
         end = min(start + max_rows_per_page, n_rows)
         page_df = df.iloc[start:end]
         page_n_rows = len(page_df)
 
-        # Ukuran font menyesuaikan jumlah data
+        # Ukuran font
         if page_n_rows > 50:
             font_size = 6.2
             header_font_size = 6.8
@@ -397,34 +392,28 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             font_size = 9.5
             header_font_size = 10.0
 
-        # Hitung lebar kolom berdasarkan konten
+        # Lebar kolom
         col_widths = []
         for col in page_df.columns:
             max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
             col_widths.append(min(max_len, 20))
-        # Lebar figure proporsional
         total_char_width = sum(col_widths) * 0.12 + 1.5
         fig_width = max(10, min(total_char_width, 20))
-        # Tinggi figure: header (1.2 inch) + baris tabel (0.32 per baris) + footer (0.3)
-        fig_height = 1.2 + page_n_rows * 0.32 + 0.4
+        fig_height = 0.8 + page_n_rows * 0.32 + 0.3   # header + baris + footer
 
         fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
 
-        # ----- HEADER AREA (di atas, menggunakan fig.text) -----
-        # Judul utama
-        fig.text(0.5, 0.97, title, ha='center', fontsize=12, weight='bold', color='#1A3C5E')
-        # Last update
-        fig.text(0.5, 0.93, f"Last Update: {last_update}", ha='center', fontsize=8, color='#5D6D7E', style='italic')
-        # Summary (total target, realtime, ACH)
+        # ----- HEADER (rapat ke atas) -----
+        fig.text(0.5, 0.98, title, ha='center', fontsize=12, weight='bold', color='#1A3C5E')
+        fig.text(0.5, 0.94, f"Last Update: {last_update}", ha='center', fontsize=8, color='#5D6D7E', style='italic')
         summary_text = (
             f"Total Target: {summary['total_target']:.0f}    "
             f"Total Realtime: {summary['total_realtime']:.0f}    "
             f"ACH Total: {summary['ach_total']:.1f}%"
         )
-        fig.text(0.5, 0.89, summary_text, ha='center', fontsize=9, color='#2C3E50', weight='bold')
+        fig.text(0.5, 0.90, summary_text, ha='center', fontsize=9, color='#2C3E50', weight='bold')
 
-        # ----- TABEL -----
-        # Tabel dimulai dari y=0.85 (bottom=0.05, height=0.80) agar rapat dengan header
+        # ----- TABEL (melebar ke bawah) -----
         ax = fig.add_subplot(111)
         ax.axis('off')
         table = ax.table(
@@ -432,7 +421,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0.02, 0.05, 0.96, 0.80]  # [left, bottom, width, height]
+            bbox=[0.02, 0.05, 0.96, 0.88]   # bottom 0.05, height 0.88 -> top = 0.93 (dekat summary)
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
@@ -447,7 +436,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             cell.set_linewidth(0.4)
             cell.set_height(0.05)
 
-        # Style baris data (zebra)
+        # Style baris data
         row_colors = ['#FFFFFF', '#F4F6F7']
         for i in range(1, page_n_rows + 1):
             for j in range(len(page_df.columns)):
@@ -456,7 +445,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
                 cell.set_edgecolor('#BDC3C7')
                 cell.set_linewidth(0.3)
 
-        # Footer halaman
+        # Footer
         if n_rows > max_rows_per_page:
             total_pages = (n_rows - 1) // max_rows_per_page + 1
             footer = f"Halaman {page+1}/{total_pages} | Total: {page_n_rows} toko"
@@ -464,11 +453,11 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             footer = f"Total: {page_n_rows} toko"
         fig.text(0.5, 0.02, footer, ha='center', fontsize=7, color='#7F8C8D')
 
-        # Simpan dengan kualitas tinggi
-        plt.tight_layout(rect=[0, 0.03, 1, 0.85], pad=0.1)
+        # tight_layout dengan rect atas 0.88 agar header tidak terpotong
+        plt.tight_layout(rect=[0, 0.03, 1, 0.88], pad=0.05)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
-                    pad_inches=0.05, facecolor='white', edgecolor='none',
+                    pad_inches=0.03, facecolor='white', edgecolor='none',
                     pil_kwargs={'quality': 95, 'optimize': True})
         plt.close()
         files.append(page_filename)
