@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import pickle
 import logging
 from io import BytesIO
 from collections import defaultdict
@@ -226,7 +227,7 @@ def df_summary(df, modul_name):
     return html
 
 # -------------------------------------------------------------------
-# 5. JPEG table image (HD, rapat, tanpa emoji)
+# 5. JPEG table image (HD, sangat rapat)
 # -------------------------------------------------------------------
 def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_per_page=100):
     n_rows = len(df)
@@ -240,7 +241,6 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         page_df = df.iloc[start:end]
         page_n_rows, page_n_cols = page_df.shape
 
-        # ukuran font kecil & rapat
         if page_n_rows > 50:
             font_size = 6.2
             header_font_size = 6.8
@@ -258,7 +258,6 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             header_font_size = 10.0
             scale_y = 1.2
 
-        # lebar kolom maks 15 karakter
         col_widths = []
         for col in page_df.columns:
             max_len = max(
@@ -275,7 +274,6 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         ax = fig.add_subplot(111)
         ax.axis('off')
 
-        # Judul sangat dekat dengan tepi atas
         title_lines = [title]
         if last_update:
             title_lines.append(f"Last Update: {last_update}")
@@ -283,23 +281,22 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             total_pages = (n_rows - 1) // max_rows_per_page + 1
             title_lines.append(f"Hal {page+1}/{total_pages}")
 
-        y_title = 0.99                     # mulai dari paling atas
+        y_title = 0.99
         for i, line in enumerate(title_lines):
             if i == 0:
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
                         fontsize=11, weight='bold', color='#1A3C5E')
             else:
-                y_title -= 0.015           # jarak antar baris judul diperkecil
+                y_title -= 0.015
                 ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
                         fontsize=6.5, color='#5D6D7E', style='italic')
 
-        # Tabel dinaikkan: bottom = 0.18, height = 0.77 → top = 0.95
         table = ax.table(
             cellText=page_df.values,
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0.01, 0.18, 0.98, 0.77]   # bottom lebih tinggi, height lebih pendek
+            bbox=[0.01, 0.18, 0.98, 0.77]
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
@@ -357,7 +354,6 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 
         fig.text(0.5, 0.12, f"Total: {page_n_rows} toko", ha='center', fontsize=6.5, color='#7F8C8D')
 
-        # rect: atas = 1.0 agar tidak ada ruang kosong di atas
         plt.tight_layout(rect=[0, 0.05, 1, 1.0], pad=0.05)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
@@ -367,15 +363,27 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
         files.append(page_filename)
 
     return files
+
 # -------------------------------------------------------------------
 # 6. State & handlers
 # -------------------------------------------------------------------
-WAITING_MASTER_FILE = 0   # untuk upload_master
+WAITING_MASTER_FILE = 0
 WAITING_SOSIS = 1
 WAITING_AYAM = 2
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mulai input data, pastikan master sudah diupload."""
+    chat_id = update.effective_chat.id
+    master_path = f"data/masters/{chat_id}.pkl"
+
+    # Muat dari disk jika belum ada di memory
+    if ('master' not in context.user_data or context.user_data['master'] is None) and os.path.exists(master_path):
+        try:
+            with open(master_path, 'rb') as f:
+                context.user_data['master'] = pickle.load(f)
+        except Exception as e:
+            logging.warning(f"Gagal memuat master: {e}")
+
     if 'master' not in context.user_data or context.user_data['master'] is None:
         await update.message.reply_text(
             "Anda belum mengunggah file struktur master.\n"
@@ -403,6 +411,14 @@ async def receive_master_file(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         df = load_master_excel(fb)
         context.user_data['master'] = df
+
+        # Simpan ke disk
+        chat_id = update.effective_chat.id
+        os.makedirs("data/masters", exist_ok=True)
+        master_path = f"data/masters/{chat_id}.pkl"
+        with open(master_path, 'wb') as f:
+            pickle.dump(df, f)
+
         await update.message.reply_text(
             f"Master berhasil disimpan ({len(df)} toko).\n"
             "Sekarang Anda dapat menggunakan /start untuk memulai input data penjualan."
@@ -654,9 +670,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # 8. Main
 # -------------------------------------------------------------------
 def main():
+    os.makedirs("data/masters", exist_ok=True)
     logging.basicConfig(level=logging.INFO)
 
-    # timeout lebih besar untuk kirim gambar
     request = HTTPXRequest(connect_timeout=30, read_timeout=60, write_timeout=60)
     app = Application.builder().token(TOKEN).request(request).build()
 
