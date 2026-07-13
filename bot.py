@@ -378,7 +378,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         page_df = df.iloc[start:end]
         page_n_rows = len(page_df)
 
-        # Ukuran font
+        # Ukuran font dinamis
         if page_n_rows > 50:
             font_size = 6.5
             header_font_size = 7.0
@@ -401,42 +401,22 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         fig_width = max(11, min(total_char_width, 22))
         fig_height = 0.8 + page_n_rows * 0.35 + 0.4
 
-        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='#FAFBFC')
-        
-        # ----- BACKGROUND KARTU -----
-        # Tambahkan persegi panjang dengan sudut membulat sebagai latar
-        from matplotlib.patches import FancyBboxPatch
-        card = FancyBboxPatch(
-            (0.01, 0.01), 0.98, 0.98,
-            boxstyle="round,pad=0.02", 
-            facecolor='white', 
-            edgecolor='#D0D5DD', 
-            linewidth=0.8,
-            transform=fig.transFigure
-        )
-        fig.patches.append(card)
-
+        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
         left_margin = 0.06
 
-        # ----- HEADER LAPORAN -----
-        fig.text(left_margin, 0.96, title, ha='left', fontsize=14, weight='bold', 
-                color='#1A3C5E', fontfamily='sans-serif')
-        
-        # Garis pemisah di bawah judul
+        # ----- HEADER LAPORAN (rata kiri) -----
+        fig.text(left_margin, 0.96, title, ha='left', fontsize=14, weight='bold', color='#1A3C5E')
+        # Garis pemisah tipis
         fig.text(left_margin, 0.935, "─" * 60, ha='left', fontsize=6, color='#5D6D7E', alpha=0.5)
-        
-        fig.text(left_margin, 0.92, f"Last Update: {last_update}", ha='left', 
-                fontsize=8.5, color='#5D6D7E', style='italic')
-        
+        fig.text(left_margin, 0.92, f"Last Update: {last_update}", ha='left', fontsize=8.5, color='#5D6D7E', style='italic')
         summary_text = (
             f"Total Target: {summary['total_target']:.0f}     "
             f"Total Realtime: {summary['total_realtime']:.0f}     "
             f"ACH Total: {summary['ach_total']:.1f}%"
         )
-        fig.text(left_margin, 0.895, summary_text, ha='left', fontsize=9.5, 
-                color='#2C3E50', weight='bold')
+        fig.text(left_margin, 0.895, summary_text, ha='left', fontsize=9.5, color='#2C3E50', weight='bold')
 
-        # ----- TABEL -----
+        # ----- TABEL (area aman, tidak bertabrakan) -----
         ax = fig.add_subplot(111)
         ax.axis('off')
         table = ax.table(
@@ -444,16 +424,15 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[left_margin - 0.02, 0.06, 0.90, 0.82]
+            bbox=[0.04, 0.08, 0.92, 0.80]   # [left, bottom, width, height] – tidak menutupi header/footer
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
 
-        # ----- STYLE HEADER TABEL (gradien) -----
-        # Buat gradien warna untuk header
+        # ----- HEADER TABEL (gradien navy -> royal blue) -----
         import matplotlib.colors as mcolors
-        start_color = '#1A3C5E'  # navy
-        end_color = '#2980B9'    # biru royal
+        start_color = '#1A3C5E'
+        end_color = '#2980B9'
         cmap = mcolors.LinearSegmentedColormap.from_list('custom', [start_color, end_color])
         n_header_cols = len(page_df.columns)
         for j in range(n_header_cols):
@@ -465,33 +444,29 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             cell.set_linewidth(0.8)
             cell.set_height(0.06)
 
-        # ----- STYLE BARIS DATA -----
-        row_colors = ['#FFFFFF', '#F0F4FA']  # putih & biru sangat muda
+        # ----- BARIS DATA (selang-seling putih & biru sangat muda) -----
+        row_colors = ['#FFFFFF', '#F0F4FA']
         for i in range(1, page_n_rows + 1):
             for j in range(len(page_df.columns)):
                 cell = table[i, j]
                 cell.set_facecolor(row_colors[(i-1) % 2])
                 cell.set_edgecolor('#D0D5DD')
                 cell.set_linewidth(0.4)
-                # Teks sedikit lebih gelap untuk kontras
                 cell.set_text_props(color='#2C3E50')
 
-        # ----- FOOTER -----
+        # ----- FOOTER (kotak rounded abu gelap) -----
         if n_rows > max_rows_per_page:
             total_pages = (n_rows - 1) // max_rows_per_page + 1
             footer = f"Halaman {page+1}/{total_pages} | Total: {page_n_rows} toko"
         else:
             footer = f"Total: {page_n_rows} toko"
-        
-        # Footer dengan latar belakang abu gelap
-        fig.text(left_margin, 0.03, footer, ha='left', fontsize=7.5, 
-                color='white', weight='bold',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='#34495E', edgecolor='none', alpha=0.9))
+        fig.text(left_margin, 0.03, footer, ha='left', fontsize=7.5, color='white', weight='bold',
+                 bbox=dict(boxstyle='round,pad=0.3', facecolor='#34495E', edgecolor='none', alpha=0.9))
 
         plt.tight_layout(rect=[0.02, 0.04, 0.98, 0.88], pad=0.1)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
-                    pad_inches=0.08, facecolor='#FAFBFC', edgecolor='none',
+                    pad_inches=0.08, facecolor='white', edgecolor='none',
                     pil_kwargs={'quality': 95, 'optimize': True})
         plt.close()
         files.append(page_filename)
