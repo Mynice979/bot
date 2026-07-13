@@ -368,11 +368,12 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     """
-    Buat JPEG khusus detail AM/AS dengan header laporan dan tabel detail.
+    Buat JPEG detail AM/AS dengan header ringkas di atas dan tabel rapat di bawah.
     """
     n_rows = len(df)
     files = []
 
+    # Tambahkan kolom No di posisi pertama
     df = df.reset_index(drop=True)
     df.insert(0, 'No', range(1, len(df) + 1))
     n_cols = df.shape[1]
@@ -382,45 +383,61 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         page_df = df.iloc[start:end]
         page_n_rows = len(page_df)
 
+        # Ukuran font menyesuaikan jumlah data
         if page_n_rows > 50:
             font_size = 6.2
             header_font_size = 6.8
-            scale_y = 0.9
         elif page_n_rows > 25:
             font_size = 7.5
             header_font_size = 8.0
-            scale_y = 1.0
         elif page_n_rows > 15:
             font_size = 8.5
             header_font_size = 9.0
-            scale_y = 1.1
         else:
             font_size = 9.5
             header_font_size = 10.0
-            scale_y = 1.2
 
+        # Hitung lebar kolom berdasarkan konten
         col_widths = []
         for col in page_df.columns:
             max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
-            col_widths.append(min(max_len, 18))
-        total_width = sum(col_widths) * 0.13 + 2.5
-        fig_width = max(10, min(total_width, 18))
-        fig_height = max(4.5, page_n_rows * 0.32 + 3.5)
+            col_widths.append(min(max_len, 20))
+        # Lebar figure proporsional
+        total_char_width = sum(col_widths) * 0.12 + 1.5
+        fig_width = max(10, min(total_char_width, 20))
+        # Tinggi figure: header (1.2 inch) + baris tabel (0.32 per baris) + footer (0.3)
+        fig_height = 1.2 + page_n_rows * 0.32 + 0.4
 
         fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
-        fig.text(0.5, 0.98, title, ha='center', fontsize=12, weight='bold', color='#1A3C5E')
-        fig.text(0.5, 0.94, f"Last Update: {last_update}", ha='center', fontsize=8, color='#5D6D7E', style='italic')
-        summary_text = f"Total Target: {summary['total_target']:.0f}    Total Realtime: {summary['total_realtime']:.0f}    ACH Total: {summary['ach_total']:.1f}%"
-        fig.text(0.5, 0.90, summary_text, ha='center', fontsize=9, color='#2C3E50', weight='bold')
 
+        # ----- HEADER AREA (di atas, menggunakan fig.text) -----
+        # Judul utama
+        fig.text(0.5, 0.97, title, ha='center', fontsize=12, weight='bold', color='#1A3C5E')
+        # Last update
+        fig.text(0.5, 0.93, f"Last Update: {last_update}", ha='center', fontsize=8, color='#5D6D7E', style='italic')
+        # Summary (total target, realtime, ACH)
+        summary_text = (
+            f"Total Target: {summary['total_target']:.0f}    "
+            f"Total Realtime: {summary['total_realtime']:.0f}    "
+            f"ACH Total: {summary['ach_total']:.1f}%"
+        )
+        fig.text(0.5, 0.89, summary_text, ha='center', fontsize=9, color='#2C3E50', weight='bold')
+
+        # ----- TABEL -----
+        # Tabel dimulai dari y=0.85 (bottom=0.05, height=0.80) agar rapat dengan header
         ax = fig.add_subplot(111)
         ax.axis('off')
-        table = ax.table(cellText=page_df.values, colLabels=page_df.columns,
-                        cellLoc='center', loc='center',
-                        bbox=[0.03, 0.05, 0.94, 0.78])
+        table = ax.table(
+            cellText=page_df.values,
+            colLabels=page_df.columns,
+            cellLoc='center',
+            loc='center',
+            bbox=[0.02, 0.05, 0.96, 0.80]  # [left, bottom, width, height]
+        )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
 
+        # Style header tabel
         header_color = '#1A3C5E'
         for j in range(len(page_df.columns)):
             cell = table[0, j]
@@ -430,6 +447,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             cell.set_linewidth(0.4)
             cell.set_height(0.05)
 
+        # Style baris data (zebra)
         row_colors = ['#FFFFFF', '#F4F6F7']
         for i in range(1, page_n_rows + 1):
             for j in range(len(page_df.columns)):
@@ -438,14 +456,16 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
                 cell.set_edgecolor('#BDC3C7')
                 cell.set_linewidth(0.3)
 
+        # Footer halaman
         if n_rows > max_rows_per_page:
             total_pages = (n_rows - 1) // max_rows_per_page + 1
-            fig.text(0.5, 0.02, f"Halaman {page+1}/{total_pages} | Total: {page_n_rows} toko",
-                     ha='center', fontsize=7, color='#7F8C8D')
+            footer = f"Halaman {page+1}/{total_pages} | Total: {page_n_rows} toko"
         else:
-            fig.text(0.5, 0.02, f"Total: {page_n_rows} toko", ha='center', fontsize=7, color='#7F8C8D')
+            footer = f"Total: {page_n_rows} toko"
+        fig.text(0.5, 0.02, footer, ha='center', fontsize=7, color='#7F8C8D')
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.88], pad=0.1)
+        # Simpan dengan kualitas tinggi
+        plt.tight_layout(rect=[0, 0.03, 1, 0.85], pad=0.1)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
                     pad_inches=0.05, facecolor='white', edgecolor='none',
@@ -454,7 +474,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         files.append(page_filename)
 
     return files
-
 # -------------------------------------------------------------------
 # 7. State & handlers
 # -------------------------------------------------------------------
@@ -695,42 +714,66 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bio.seek(0)
             await query.message.reply_document(document=bio, filename=filename, caption=f"Detail per {col.upper()} - {MODUL_LABEL[mod]['label']} (Excel)")
         else:
+            # VERSI JPEG DETAIL AM/AS
             last_update = context.user_data.get(f'{mod}_last', '')
             for name, group in sorted_df.groupby(col):
+                # Siapkan dataframe dengan kolom yang diminta
                 if 'am' in opt:
-                    display_cols = {
-                        'kode_toko': MASTER_COLS['kode_toko'],
-                        'nama_toko': MASTER_COLS['nama_toko'],
-                        'as': MASTER_COLS['as'],
-                        'type': MASTER_COLS['type_col'],
-                        'target': MASTER_COLS['target'],
-                        'realtime': MASTER_COLS['realtime'],
-                        'ach': MASTER_COLS['ach']
-                    }
+                    # Detail AM -> tampilkan: Kode Toko, Nama Toko, AS, Type Modul, Target, Realtime, Selisih, ACH
+                    display_cols = [
+                        MASTER_COLS['kode_toko'],
+                        MASTER_COLS['nama_toko'],
+                        MASTER_COLS['as'],
+                        MASTER_COLS['type_col'],
+                        MASTER_COLS['target'],
+                        MASTER_COLS['realtime'],
+                        MASTER_COLS['ach']
+                    ]
                     col_names = ['Kode Toko', 'Nama Toko', 'AS', 'Type Modul', 'Target', 'Realtime', 'Selisih (+/-)', 'ACH']
                 else:
-                    display_cols = {
-                        'kode_toko': MASTER_COLS['kode_toko'],
-                        'nama_toko': MASTER_COLS['nama_toko'],
-                        'am': MASTER_COLS['am'],
-                        'type': MASTER_COLS['type_col'],
-                        'target': MASTER_COLS['target'],
-                        'realtime': MASTER_COLS['realtime'],
-                        'ach': MASTER_COLS['ach']
-                    }
-                    col_names = ['Kode Toko', 'Nama Toko', 'AM', 'Type Modul', 'Target', 'Realtime', 'Selisih (+/-)', 'ACH']
+                    # Detail AS -> tampilkan: Kode Toko, Nama Toko, AM, AS, Type Modul, Target, Realtime, Selisih, ACH
+                    display_cols = [
+                        MASTER_COLS['kode_toko'],
+                        MASTER_COLS['nama_toko'],
+                        MASTER_COLS['am'],
+                        MASTER_COLS['as'],
+                        MASTER_COLS['type_col'],
+                        MASTER_COLS['target'],
+                        MASTER_COLS['realtime'],
+                        MASTER_COLS['ach']
+                    ]
+                    col_names = ['Kode Toko', 'Nama Toko', 'AM', 'AS', 'Type Modul', 'Target', 'Realtime', 'Selisih (+/-)', 'ACH']
 
-                # Ambil 7 kolom asli
-                raw_df = group[list(display_cols.values())].copy()
+                # Ambil data mentah
+                raw_df = group[display_cols].copy()
+
                 # Konversi numerik
                 target_num = pd.to_numeric(raw_df[MASTER_COLS['target']], errors='coerce').fillna(0)
                 realtime_num = pd.to_numeric(raw_df[MASTER_COLS['realtime']], errors='coerce').fillna(0)
                 ach_num = pd.to_numeric(raw_df[MASTER_COLS['ach']], errors='coerce').fillna(0)
-                # Tambah kolom Selisih
-                raw_df['Selisih'] = realtime_num - target_num
-                # Sekarang 8 kolom, bisa ganti nama
-                raw_df.columns = col_names
-                detail_df = raw_df
+
+                # Hitung selisih
+                selisih = realtime_num - target_num
+
+                # Buat dataframe final dengan kolom yang sudah diformat
+                detail_data = {
+                    'Kode Toko': raw_df[MASTER_COLS['kode_toko']].values,
+                    'Nama Toko': raw_df[MASTER_COLS['nama_toko']].values,
+                }
+                if 'am' in opt:
+                    detail_data['AS'] = raw_df[MASTER_COLS['as']].values
+                else:
+                    detail_data['AM'] = raw_df[MASTER_COLS['am']].values
+                    detail_data['AS'] = raw_df[MASTER_COLS['as']].values
+
+                detail_data['Type Modul'] = raw_df[MASTER_COLS['type_col']].values
+                detail_data['Target'] = [f"{x:.0f}" for x in target_num]
+                detail_data['Realtime'] = [f"{x:.0f}" for x in realtime_num]
+                # Format selisih: >=0 tanpa tanda, <0 dengan minus
+                detail_data['Selisih (+/-)'] = [f"{int(x)}" if x >= 0 else f"{int(x)}" for x in selisih]
+                detail_data['ACH'] = [f"{x:.1f}%" for x in ach_num]
+
+                detail_df = pd.DataFrame(detail_data, columns=col_names)
 
                 # Summary
                 total_target = target_num.sum()
@@ -741,12 +784,6 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'total_realtime': total_realtime,
                     'ach_total': ach_total
                 }
-
-                # Format tampilan
-                detail_df['Target'] = detail_df['Target'].apply(lambda x: f"{x:.0f}")
-                detail_df['Realtime'] = detail_df['Realtime'].apply(lambda x: f"{x:.0f}")
-                detail_df['Selisih (+/-)'] = detail_df['Selisih (+/-)'].apply(lambda x: f"{x:+.0f}")
-                detail_df['ACH'] = detail_df['ACH'].apply(lambda x: f"{x:.1f}%")
 
                 unit_type = 'AM' if 'am' in opt else 'AS'
                 title = f"REPORT AREA ({unit_type} {name}) - {MODUL_LABEL[mod]['label']}"
@@ -762,7 +799,6 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.message.reply_media_group(media=media)
                 for f in img_files:
                     os.remove(f)
-
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
              InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
