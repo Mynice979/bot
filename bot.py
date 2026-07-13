@@ -4,7 +4,8 @@ import re
 import pickle
 import logging
 from io import BytesIO
-
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import pandas as pd
 import numpy as np
 import yaml
@@ -366,19 +367,49 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
 # -------------------------------------------------------------------
 # 6. JPEG detail AM/AS dengan header laporan
 # -------------------------------------------------------------------
-def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
+def create_detail_jpeg(df, title, jam, summary, filename='temp.jpg', max_rows_per_page=80,
+                        col_width_weights=None):
+    """
+    Membuat JPEG report tabel sesuai gaya "REPORT AREA - FRIED CHICKEN":
+    - Banner navy solid di atas berisi judul + jam
+    - Baris ringkasan (Target/Realtime/ACH Total di kiri, Jumlah Toko di kanan)
+    - Tabel dengan header abu-abu terang, baris selang-seling putih/biru muda
+
+    Params:
+        df       : DataFrame data toko (tanpa kolom 'No', akan ditambahkan otomatis)
+        title    : judul report, mis. "REPORT AREA JLE - FRIED CHICKEN"
+        jam      : string jam, mis. "16.00"
+        summary  : dict berisi 'total_target', 'total_realtime', 'ach_total', 'jumlah_toko'
+        filename : nama file dasar
+        max_rows_per_page : jumlah baris maksimal per halaman
+    """
     n_rows = len(df)
     files = []
 
     df = df.reset_index(drop=True)
     df.insert(0, 'No', range(1, len(df) + 1))
 
+    # kolom yang rata kiri (selain itu rata tengah)
+    left_align_cols = {'TOKO'}
+
+    # bobot lebar relatif tiap kolom -- angka lebih besar = kolom lebih lebar.
+    # Ubah angka 'TOKO' di sini kalau ingin lebih lebar/sempit lagi.
+    default_weights = {
+        'No': 0.5, 'KDTK': 0.9, 'TOKO': 3.0, 'AS': 0.6,
+        'TYPE': 1.6, 'Target': 0.9, 'Realtime': 1.0, '+/-': 0.8, 'ACH': 0.8,
+    }
+    if col_width_weights:
+        default_weights.update(col_width_weights)
+    weights = [default_weights.get(col, 1.0) for col in df.columns]
+    total_weight = sum(weights)
+    col_widths = [w / total_weight for w in weights]
+
     for page, start in enumerate(range(0, n_rows, max_rows_per_page)):
         end = min(start + max_rows_per_page, n_rows)
         page_df = df.iloc[start:end]
         page_n_rows = len(page_df)
 
-        # Ukuran font dinamis
+        # ----- Ukuran font dinamis -----
         if page_n_rows > 50:
             font_size = 6.5
             header_font_size = 7.0
@@ -392,86 +423,143 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             font_size = 10.0
             header_font_size = 10.5
 
-        # Lebar kolom
-        col_widths = []
+        # ----- Lebar figure -----
+        col_widths_chars = []
         for col in page_df.columns:
             max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
-            col_widths.append(min(max_len, 20))
-        total_char_width = sum(col_widths) * 0.13 + 2.0
+            col_widths_chars.append(min(max_len, 25))
+        total_char_width = sum(col_widths_chars) * 0.14 + 2.0
         fig_width = max(11, min(total_char_width, 22))
-        fig_height = 0.8 + page_n_rows * 0.35 + 0.4
+
+        banner_height_in = 0.95          # tinggi banner navy (inch)
+        summary_height_in = 0.55         # tinggi baris ringkasan (inch)
+        table_row_height_in = 0.34
+        top_pad_in = 0.15
+        bottom_pad_in = 0.35
+
+        fig_height = (banner_height_in + summary_height_in + top_pad_in
+                      + page_n_rows * table_row_height_in + bottom_pad_in)
 
         fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
-        left_margin = 0.06
+        left_margin = 0.035
+        right_margin = 0.965
 
-        # ----- HEADER LAPORAN (rata kiri) -----
-        fig.text(left_margin, 0.96, title, ha='left', fontsize=14, weight='bold', color='#1A3C5E')
-        # Garis pemisah tipis
-        fig.text(left_margin, 0.935, "─" * 60, ha='left', fontsize=6, color='#5D6D7E', alpha=0.5)
-        fig.text(left_margin, 0.92, f"Last Update: {last_update}", ha='left', fontsize=8.5, color='#5D6D7E', style='italic')
-        summary_text = (
-            f"Total Target: {summary['total_target']:.0f}     "
-            f"Total Realtime: {summary['total_realtime']:.0f}     "
-            f"ACH Total: {summary['ach_total']:.1f}%"
-        )
-        fig.text(left_margin, 0.895, summary_text, ha='left', fontsize=9.5, color='#2C3E50', weight='bold')
+        banner_frac = banner_height_in / fig_height
+        summary_frac = summary_height_in / fig_height
 
-        # ----- TABEL (area aman, tidak bertabrakan) -----
+        # ===== 1. BANNER NAVY SOLID =====
+        fig.add_artist(Rectangle(
+            (0, 1 - banner_frac), 1, banner_frac,
+            transform=fig.transFigure, facecolor='#1A3C5E', edgecolor='none', zorder=0
+        ))
+        fig.text(left_margin, 1 - banner_frac * 0.38, title,
+                  ha='left', va='center', fontsize=15, weight='bold', color='white')
+        fig.text(left_margin, 1 - banner_frac * 0.78, f"Jam: {jam}",
+                  ha='left', va='center', fontsize=10, color='white')
+
+        # ===== 2. BARIS RINGKASAN (kiri: target/realtime/ach, kanan: jumlah toko) =====
+        summary_top = 1 - banner_frac - 0.015
+        line_gap = summary_frac / 3.2
+        fig.text(left_margin, summary_top, f"Target : {summary['total_target']:.0f}",
+                  ha='left', va='top', fontsize=9.5, weight='bold', color='#1A1A1A')
+        fig.text(left_margin, summary_top - line_gap, f"Realtime : {summary['total_realtime']:.0f}",
+                  ha='left', va='top', fontsize=9.5, weight='bold', color='#1A1A1A')
+        fig.text(left_margin, summary_top - 2 * line_gap, f"ACH Total : {summary['ach_total']:.2f}",
+                  ha='left', va='top', fontsize=9.5, weight='bold', color='#1A1A1A')
+        fig.text(right_margin, summary_top, f"Jumlah Toko : {summary['jumlah_toko']}",
+                  ha='right', va='top', fontsize=9.5, weight='bold', color='#1A1A1A')
+
+        # ===== 3. TABEL =====
+        table_top = 1 - banner_frac - summary_frac - 0.01
+        table_bottom = bottom_pad_in / fig_height * 0.4
+        table_height = table_top - table_bottom
+
         ax = fig.add_subplot(111)
         ax.axis('off')
+        ax.set_position([0.02, table_bottom, 0.96, table_height])
+
         table = ax.table(
             cellText=page_df.values,
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0.04, 0.08, 0.92, 0.80]   # [left, bottom, width, height] – tidak menutupi header/footer
+            colWidths=col_widths,
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
+        table.scale(1, 1.35)
 
-        # ----- HEADER TABEL (gradien navy -> royal blue) -----
-        import matplotlib.colors as mcolors
-        start_color = '#1A3C5E'
-        end_color = '#2980B9'
-        cmap = mcolors.LinearSegmentedColormap.from_list('custom', [start_color, end_color])
-        n_header_cols = len(page_df.columns)
-        for j in range(n_header_cols):
-            color = cmap(j / (n_header_cols - 1)) if n_header_cols > 1 else start_color
+        n_cols = len(page_df.columns)
+
+        # ----- Header tabel: abu-abu terang, teks hitam tebal -----
+        for j in range(n_cols):
             cell = table[0, j]
-            cell.set_facecolor(color)
-            cell.set_text_props(color='white', weight='bold', fontsize=header_font_size)
-            cell.set_edgecolor('#1A3C5E')
+            cell.set_facecolor('#EAEAEA')
+            cell.set_text_props(color='#1A1A1A', weight='bold', fontsize=header_font_size)
+            cell.set_edgecolor('#B0B0B0')
             cell.set_linewidth(0.8)
-            cell.set_height(0.06)
+            col_name = page_df.columns[j]
+            cell.set_text_props(ha='left' if col_name in left_align_cols else 'center')
 
-        # ----- BARIS DATA (selang-seling putih & biru sangat muda) -----
+        # ----- Baris data: selang-seling putih & biru sangat muda -----
         row_colors = ['#FFFFFF', '#F0F4FA']
         for i in range(1, page_n_rows + 1):
-            for j in range(len(page_df.columns)):
+            for j in range(n_cols):
                 cell = table[i, j]
-                cell.set_facecolor(row_colors[(i-1) % 2])
+                cell.set_facecolor(row_colors[(i - 1) % 2])
                 cell.set_edgecolor('#D0D5DD')
                 cell.set_linewidth(0.4)
-                cell.set_text_props(color='#2C3E50')
+                col_name = page_df.columns[j]
+                cell.set_text_props(
+                    color='#2C3E50',
+                    ha='left' if col_name in left_align_cols else 'center',
+                    weight='bold' if col_name == 'TOKO' else 'normal'
+                )
 
-        # ----- FOOTER (kotak rounded abu gelap) -----
-        if n_rows > max_rows_per_page:
-            total_pages = (n_rows - 1) // max_rows_per_page + 1
-            footer = f"Halaman {page+1}/{total_pages} | Total: {page_n_rows} toko"
-        else:
-            footer = f"Total: {page_n_rows} toko"
-        fig.text(left_margin, 0.03, footer, ha='left', fontsize=7.5, color='white', weight='bold',
-                 bbox=dict(boxstyle='round,pad=0.3', facecolor='#34495E', edgecolor='none', alpha=0.9))
+        # garis tebal navy di bawah header (pemisah header vs body)
+        for j in range(n_cols):
+            table[0, j].set_edgecolor('#1A3C5E')
+            table[0, j].set_linewidth(1.2)
 
-        plt.tight_layout(rect=[0.02, 0.04, 0.98, 0.88], pad=0.1)
-        page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
-        plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
-                    pad_inches=0.08, facecolor='white', edgecolor='none',
+        page_filename = f"{filename.replace('.jpg', '')}_p{page + 1}.jpg"
+        plt.savefig(page_filename, format='jpg', dpi=300,
+                    facecolor='white', edgecolor='none',
                     pil_kwargs={'quality': 95, 'optimize': True})
         plt.close()
         files.append(page_filename)
 
     return files
+
+
+if __name__ == '__main__':
+    import pandas as pd
+
+    data = {
+        'KDTK': ['TFMT', 'TLNE', 'TUXZ'],
+        'TOKO': ['RAYA MATANI', 'RW MONGONSIDI', 'PRAILIU SUMBA'],
+        'AS': ['KHO', 'YRD', 'EGR'],
+        'TYPE': ['FRIED CHICKEN', 'FRIED CHICKEN', 'FRIED CHICKEN'],
+        'Target': [15, 34, 79],
+        'Realtime': [9, 14, 29],
+        '+/-': [-6, -20, -50],
+        'ACH': [60.00, 41.18, 36.71],
+    }
+    df = pd.DataFrame(data)
+
+    summary = {
+        'total_target': 2449,
+        'total_realtime': 558,
+        'ach_total': 22.78,
+        'jumlah_toko': 34,
+    }
+
+    create_detail_jpeg(
+        df,
+        title="REPORT AREA JLE - FRIED CHICKEN",
+        jam="16.00",
+        summary=summary,
+        filename='report_area_jle.jpg'
+    )
 # -------------------------------------------------------------------
 # 7. State & handlers
 # -------------------------------------------------------------------
