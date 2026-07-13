@@ -4,14 +4,14 @@ import re
 import pickle
 import logging
 from io import BytesIO
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+
 import pandas as pd
 import numpy as np
 import yaml
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 from dotenv import load_dotenv
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -365,11 +365,11 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
     return files
 
 # -------------------------------------------------------------------
-# 6. JPEG detail AM/AS dengan header laporan
+# 6. JPEG detail AM/AS dengan banner navy + ringkasan kiri + tabel rapi
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     """
-    Membuat JPEG report tabel gaya baru:
+    Buat JPEG detail AM/AS gaya baru:
     - Banner navy solid di atas berisi judul + last update
     - Baris ringkasan (Target/Realtime/ACH Total di kiri, Jumlah Toko di kanan)
     - Tabel dengan header abu-abu terang, baris selang-seling putih/biru muda
@@ -385,7 +385,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         'No': 0.5, 'Kode Toko': 0.9, 'Nama Toko': 3.0, 'AS': 0.6,
         'Type': 1.6, 'Target': 0.9, 'Realtime': 1.0, '+/-': 0.8, 'ACH': 0.8,
     }
-    # Jika detail AS, tambahkan kolom AM
     if 'AM' in df.columns:
         default_weights['AM'] = 0.6
     weights = [default_weights.get(col, 1.0) for col in df.columns]
@@ -511,35 +510,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
 
     return files
 
-if __name__ == '__main__':
-    import pandas as pd
-
-    data = {
-        'KDTK': ['TFMT', 'TLNE', 'TUXZ'],
-        'TOKO': ['RAYA MATANI', 'RW MONGONSIDI', 'PRAILIU SUMBA'],
-        'AS': ['KHO', 'YRD', 'EGR'],
-        'TYPE': ['FRIED CHICKEN', 'FRIED CHICKEN', 'FRIED CHICKEN'],
-        'Target': [15, 34, 79],
-        'Realtime': [9, 14, 29],
-        '+/-': [-6, -20, -50],
-        'ACH': [60.00, 41.18, 36.71],
-    }
-    df = pd.DataFrame(data)
-
-    summary = {
-        'total_target': 2449,
-        'total_realtime': 558,
-        'ach_total': 22.78,
-        'jumlah_toko': 34,
-    }
-
-    create_detail_jpeg(
-        df,
-        title="REPORT AREA JLE - FRIED CHICKEN",
-        jam="16.00",
-        summary=summary,
-        filename='report_area_jle.jpg'
-    )
 # -------------------------------------------------------------------
 # 7. State & handlers
 # -------------------------------------------------------------------
@@ -844,8 +814,8 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     media = [InputMediaPhoto(open(f, 'rb')) for f in img_files]
                     await query.message.reply_media_group(media=media)
                 for f in img_files:
-                    os.remove(f)                    
-                    
+                    os.remove(f)
+
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
              InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
