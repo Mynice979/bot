@@ -399,22 +399,23 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             col_widths.append(min(max_len, 20))
         total_char_width = sum(col_widths) * 0.12 + 1.5
         fig_width = max(10, min(total_char_width, 20))
-        fig_height = 0.6 + page_n_rows * 0.32 + 0.3   # header + baris + footer
+        fig_height = 0.5 + page_n_rows * 0.32 + 0.3   # header + baris + footer
 
         fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
 
-        # ----- HEADER (rata kiri) -----
         left_margin = 0.02
+
+        # ----- HEADER (rata kiri, dinaikkan) -----
         fig.text(left_margin, 0.98, title, ha='left', fontsize=12, weight='bold', color='#1A3C5E')
-        fig.text(left_margin, 0.94, f"Last Update: {last_update}", ha='left', fontsize=8, color='#5D6D7E', style='italic')
+        fig.text(left_margin, 0.945, f"Last Update: {last_update}", ha='left', fontsize=8, color='#5D6D7E', style='italic')
         summary_text = (
             f"Total Target: {summary['total_target']:.0f}    "
             f"Total Realtime: {summary['total_realtime']:.0f}    "
             f"ACH Total: {summary['ach_total']:.1f}%"
         )
-        fig.text(left_margin, 0.90, summary_text, ha='left', fontsize=9, color='#2C3E50', weight='bold')
+        fig.text(left_margin, 0.91, summary_text, ha='left', fontsize=9, color='#2C3E50', weight='bold')
 
-        # ----- TABEL (rata kiri) -----
+        # ----- TABEL (lebih tinggi) -----
         ax = fig.add_subplot(111)
         ax.axis('off')
         table = ax.table(
@@ -422,7 +423,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[left_margin, 0.05, 0.96, 0.88]   # kiri, bawah, lebar, tinggi
+            bbox=[left_margin, 0.05, 0.96, 0.90]   # height 0.90 -> top = 0.95
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
@@ -446,7 +447,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
                 cell.set_edgecolor('#BDC3C7')
                 cell.set_linewidth(0.3)
 
-        # Footer (rata kiri)
+        # Footer
         if n_rows > max_rows_per_page:
             total_pages = (n_rows - 1) // max_rows_per_page + 1
             footer = f"Halaman {page+1}/{total_pages} | Total: {page_n_rows} toko"
@@ -454,7 +455,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             footer = f"Total: {page_n_rows} toko"
         fig.text(left_margin, 0.02, footer, ha='left', fontsize=7, color='#7F8C8D')
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.88], pad=0.05)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.90], pad=0.05)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
                     pad_inches=0.03, facecolor='white', edgecolor='none',
