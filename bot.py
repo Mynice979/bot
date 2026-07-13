@@ -380,42 +380,63 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
 
         # Ukuran font
         if page_n_rows > 50:
-            font_size = 6.2
-            header_font_size = 6.8
+            font_size = 6.5
+            header_font_size = 7.0
         elif page_n_rows > 25:
-            font_size = 7.5
-            header_font_size = 8.0
+            font_size = 8.0
+            header_font_size = 8.5
         elif page_n_rows > 15:
-            font_size = 8.5
-            header_font_size = 9.0
+            font_size = 9.0
+            header_font_size = 9.5
         else:
-            font_size = 9.5
-            header_font_size = 10.0
+            font_size = 10.0
+            header_font_size = 10.5
 
         # Lebar kolom
         col_widths = []
         for col in page_df.columns:
             max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
             col_widths.append(min(max_len, 20))
-        total_char_width = sum(col_widths) * 0.12 + 1.5
-        fig_width = max(10, min(total_char_width, 20))
-        fig_height = 0.5 + page_n_rows * 0.32 + 0.3   # header + baris + footer
+        total_char_width = sum(col_widths) * 0.13 + 2.0
+        fig_width = max(11, min(total_char_width, 22))
+        fig_height = 0.8 + page_n_rows * 0.35 + 0.4
 
-        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
+        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='#FAFBFC')
+        
+        # ----- BACKGROUND KARTU -----
+        # Tambahkan persegi panjang dengan sudut membulat sebagai latar
+        from matplotlib.patches import FancyBboxPatch
+        card = FancyBboxPatch(
+            (0.01, 0.01), 0.98, 0.98,
+            boxstyle="round,pad=0.02", 
+            facecolor='white', 
+            edgecolor='#D0D5DD', 
+            linewidth=0.8,
+            transform=fig.transFigure
+        )
+        fig.patches.append(card)
 
-        left_margin = 0.02
+        left_margin = 0.06
 
-        # ----- HEADER (rata kiri, dinaikkan) -----
-        fig.text(left_margin, 0.98, title, ha='left', fontsize=12, weight='bold', color='#1A3C5E')
-        fig.text(left_margin, 0.945, f"Last Update: {last_update}", ha='left', fontsize=8, color='#5D6D7E', style='italic')
+        # ----- HEADER LAPORAN -----
+        fig.text(left_margin, 0.96, title, ha='left', fontsize=14, weight='bold', 
+                color='#1A3C5E', fontfamily='sans-serif')
+        
+        # Garis pemisah di bawah judul
+        fig.text(left_margin, 0.935, "─" * 60, ha='left', fontsize=6, color='#5D6D7E', alpha=0.5)
+        
+        fig.text(left_margin, 0.92, f"Last Update: {last_update}", ha='left', 
+                fontsize=8.5, color='#5D6D7E', style='italic')
+        
         summary_text = (
-            f"Total Target: {summary['total_target']:.0f}    "
-            f"Total Realtime: {summary['total_realtime']:.0f}    "
+            f"Total Target: {summary['total_target']:.0f}     "
+            f"Total Realtime: {summary['total_realtime']:.0f}     "
             f"ACH Total: {summary['ach_total']:.1f}%"
         )
-        fig.text(left_margin, 0.91, summary_text, ha='left', fontsize=9, color='#2C3E50', weight='bold')
+        fig.text(left_margin, 0.895, summary_text, ha='left', fontsize=9.5, 
+                color='#2C3E50', weight='bold')
 
-        # ----- TABEL (lebih tinggi) -----
+        # ----- TABEL -----
         ax = fig.add_subplot(111)
         ax.axis('off')
         table = ax.table(
@@ -423,42 +444,54 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[left_margin, 0.05, 0.96, 0.90]   # height 0.90 -> top = 0.95
+            bbox=[left_margin - 0.02, 0.06, 0.90, 0.82]
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
 
-        # Style header tabel
-        header_color = '#1A3C5E'
-        for j in range(len(page_df.columns)):
+        # ----- STYLE HEADER TABEL (gradien) -----
+        # Buat gradien warna untuk header
+        import matplotlib.colors as mcolors
+        start_color = '#1A3C5E'  # navy
+        end_color = '#2980B9'    # biru royal
+        cmap = mcolors.LinearSegmentedColormap.from_list('custom', [start_color, end_color])
+        n_header_cols = len(page_df.columns)
+        for j in range(n_header_cols):
+            color = cmap(j / (n_header_cols - 1)) if n_header_cols > 1 else start_color
             cell = table[0, j]
-            cell.set_facecolor(header_color)
+            cell.set_facecolor(color)
             cell.set_text_props(color='white', weight='bold', fontsize=header_font_size)
-            cell.set_edgecolor('#0F2A44')
-            cell.set_linewidth(0.4)
-            cell.set_height(0.05)
+            cell.set_edgecolor('#1A3C5E')
+            cell.set_linewidth(0.8)
+            cell.set_height(0.06)
 
-        # Style baris data
-        row_colors = ['#FFFFFF', '#F4F6F7']
+        # ----- STYLE BARIS DATA -----
+        row_colors = ['#FFFFFF', '#F0F4FA']  # putih & biru sangat muda
         for i in range(1, page_n_rows + 1):
             for j in range(len(page_df.columns)):
                 cell = table[i, j]
                 cell.set_facecolor(row_colors[(i-1) % 2])
-                cell.set_edgecolor('#BDC3C7')
-                cell.set_linewidth(0.3)
+                cell.set_edgecolor('#D0D5DD')
+                cell.set_linewidth(0.4)
+                # Teks sedikit lebih gelap untuk kontras
+                cell.set_text_props(color='#2C3E50')
 
-        # Footer
+        # ----- FOOTER -----
         if n_rows > max_rows_per_page:
             total_pages = (n_rows - 1) // max_rows_per_page + 1
             footer = f"Halaman {page+1}/{total_pages} | Total: {page_n_rows} toko"
         else:
             footer = f"Total: {page_n_rows} toko"
-        fig.text(left_margin, 0.02, footer, ha='left', fontsize=7, color='#7F8C8D')
+        
+        # Footer dengan latar belakang abu gelap
+        fig.text(left_margin, 0.03, footer, ha='left', fontsize=7.5, 
+                color='white', weight='bold',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='#34495E', edgecolor='none', alpha=0.9))
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.90], pad=0.05)
+        plt.tight_layout(rect=[0.02, 0.04, 0.98, 0.88], pad=0.1)
         page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
         plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
-                    pad_inches=0.03, facecolor='white', edgecolor='none',
+                    pad_inches=0.08, facecolor='#FAFBFC', edgecolor='none',
                     pil_kwargs={'quality': 95, 'optimize': True})
         plt.close()
         files.append(page_filename)
