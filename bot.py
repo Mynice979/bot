@@ -296,7 +296,7 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0.01, 0.18, 0.98, 0.77]
+            bbox=[0, 0, 1, 1]
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
@@ -473,7 +473,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
-        table.scale(1, 1.35)
+        # table.scale(1, 1.35)
 
         n_cols = len(page_df.columns)
 
@@ -508,6 +508,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         files.append(page_filename)
 
     return files
+
 # -------------------------------------------------------------------
 # 7. State & handlers
 # -------------------------------------------------------------------
