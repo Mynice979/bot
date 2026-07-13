@@ -226,7 +226,7 @@ def df_summary(df, modul_name):
     return html
 
 # -------------------------------------------------------------------
-# 5. JPEG table image (HD, sangat rapat)
+# 5. JPEG table image (HD, sangat rapat) – untuk Top/Bottom
 # -------------------------------------------------------------------
 def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_per_page=100):
     n_rows = len(df)
@@ -364,18 +364,108 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
     return files
 
 # -------------------------------------------------------------------
-# 6. State & handlers
+# 6. JPEG detail AM/AS dengan header laporan
+# -------------------------------------------------------------------
+def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
+    """
+    Buat JPEG khusus detail AM/AS dengan header laporan dan tabel detail.
+    """
+    n_rows = len(df)
+    files = []
+
+    df = df.reset_index(drop=True)
+    df.insert(0, 'No', range(1, len(df) + 1))
+    n_cols = df.shape[1]
+
+    for page, start in enumerate(range(0, n_rows, max_rows_per_page)):
+        end = min(start + max_rows_per_page, n_rows)
+        page_df = df.iloc[start:end]
+        page_n_rows = len(page_df)
+
+        if page_n_rows > 50:
+            font_size = 6.2
+            header_font_size = 6.8
+            scale_y = 0.9
+        elif page_n_rows > 25:
+            font_size = 7.5
+            header_font_size = 8.0
+            scale_y = 1.0
+        elif page_n_rows > 15:
+            font_size = 8.5
+            header_font_size = 9.0
+            scale_y = 1.1
+        else:
+            font_size = 9.5
+            header_font_size = 10.0
+            scale_y = 1.2
+
+        col_widths = []
+        for col in page_df.columns:
+            max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
+            col_widths.append(min(max_len, 18))
+        total_width = sum(col_widths) * 0.13 + 2.5
+        fig_width = max(10, min(total_width, 18))
+        fig_height = max(4.5, page_n_rows * 0.32 + 3.5)
+
+        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
+        fig.text(0.5, 0.98, title, ha='center', fontsize=12, weight='bold', color='#1A3C5E')
+        fig.text(0.5, 0.94, f"Last Update: {last_update}", ha='center', fontsize=8, color='#5D6D7E', style='italic')
+        summary_text = f"Total Target: {summary['total_target']:.0f}    Total Realtime: {summary['total_realtime']:.0f}    ACH Total: {summary['ach_total']:.1f}%"
+        fig.text(0.5, 0.90, summary_text, ha='center', fontsize=9, color='#2C3E50', weight='bold')
+
+        ax = fig.add_subplot(111)
+        ax.axis('off')
+        table = ax.table(cellText=page_df.values, colLabels=page_df.columns,
+                        cellLoc='center', loc='center',
+                        bbox=[0.03, 0.05, 0.94, 0.78])
+        table.auto_set_font_size(False)
+        table.set_fontsize(font_size)
+
+        header_color = '#1A3C5E'
+        for j in range(len(page_df.columns)):
+            cell = table[0, j]
+            cell.set_facecolor(header_color)
+            cell.set_text_props(color='white', weight='bold', fontsize=header_font_size)
+            cell.set_edgecolor('#0F2A44')
+            cell.set_linewidth(0.4)
+            cell.set_height(0.05)
+
+        row_colors = ['#FFFFFF', '#F4F6F7']
+        for i in range(1, page_n_rows + 1):
+            for j in range(len(page_df.columns)):
+                cell = table[i, j]
+                cell.set_facecolor(row_colors[(i-1) % 2])
+                cell.set_edgecolor('#BDC3C7')
+                cell.set_linewidth(0.3)
+
+        if n_rows > max_rows_per_page:
+            total_pages = (n_rows - 1) // max_rows_per_page + 1
+            fig.text(0.5, 0.02, f"Halaman {page+1}/{total_pages} | Total: {page_n_rows} toko",
+                     ha='center', fontsize=7, color='#7F8C8D')
+        else:
+            fig.text(0.5, 0.02, f"Total: {page_n_rows} toko", ha='center', fontsize=7, color='#7F8C8D')
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.88], pad=0.1)
+        page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
+        plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
+                    pad_inches=0.05, facecolor='white', edgecolor='none',
+                    pil_kwargs={'quality': 95, 'optimize': True})
+        plt.close()
+        files.append(page_filename)
+
+    return files
+
+# -------------------------------------------------------------------
+# 7. State & handlers
 # -------------------------------------------------------------------
 WAITING_MASTER_FILE = 0
 WAITING_SOSIS = 1
 WAITING_AYAM = 2
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mulai input data, pastikan master sudah diupload."""
     chat_id = update.effective_chat.id
     master_path = f"data/masters/{chat_id}.pkl"
 
-    # Muat dari disk jika belum ada di memory
     if ('master' not in context.user_data or context.user_data['master'] is None) and os.path.exists(master_path):
         try:
             with open(master_path, 'rb') as f:
@@ -390,7 +480,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    # Inisialisasi list untuk menampung multi input
     context.user_data['sosis_list'] = []
     context.user_data['ayam_list'] = []
 
@@ -416,7 +505,6 @@ async def receive_master_file(update: Update, context: ContextTypes.DEFAULT_TYPE
         df = load_master_excel(fb)
         context.user_data['master'] = df
 
-        # Simpan ke disk
         chat_id = update.effective_chat.id
         os.makedirs("data/masters", exist_ok=True)
         master_path = f"data/masters/{chat_id}.pkl"
@@ -446,7 +534,6 @@ async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_AYAM
 
     if text.lower() == 'done':
-        # Gabungkan semua data Sosis yang terkumpul
         sosis_list = context.user_data.get('sosis_list', [])
         if sosis_list:
             context.user_data['sosis_df'] = pd.concat(sosis_list, ignore_index=True)
@@ -457,15 +544,12 @@ async def receive_sosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return WAITING_AYAM
 
-    # Parse teks yang dikirim
     df_trans, modul, info = parse_laporan_text(text)
     if df_trans is None or modul != 'HOT SAUSAGE':
         await update.message.reply_text(f"Gagal: {info}\nPastikan teks mengandung 'HOT SAUSAGE'. Coba lagi atau ketik *skip* / *done*.")
         return WAITING_SOSIS
 
-    # Simpan ke list
     context.user_data.setdefault('sosis_list', []).append(df_trans)
-    # Update last_update jika ada
     if info and isinstance(info, str):
         context.user_data['sosis_last'] = info
 
@@ -502,12 +586,10 @@ async def receive_ayam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_AYAM
 
 async def process_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Proses kedua modul dan tampilkan ringkasan."""
     master = context.user_data['master']
     summaries = []
     available_moduls = []
 
-    # Proses Sosis
     if context.user_data.get('sosis_df') is not None:
         try:
             merged_sosis = merge_and_calc(master, context.user_data['sosis_df'], MASTER_COLS['type_sosis'])
@@ -517,7 +599,6 @@ async def process_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"Peringatan (Sosis): {e}")
 
-    # Proses Ayam
     if context.user_data.get('ayam_df') is not None:
         try:
             merged_ayam = merge_and_calc(master, context.user_data['ayam_df'], MASTER_COLS['type_ayam'])
@@ -548,7 +629,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # -------------------------------------------------------------------
-# 7. Inline keyboard handlers
+# 8. Inline keyboard handlers
 # -------------------------------------------------------------------
 async def modul_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -616,13 +697,58 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             last_update = context.user_data.get(f'{mod}_last', '')
             for name, group in sorted_df.groupby(col):
-                cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'],
-                             MASTER_COLS['realtime'], MASTER_COLS['ach']]
-                display_df = group[cols_show].copy()
-                display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(lambda x: f"{x:.0f}" if pd.notna(x) else "-")
-                display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
-                title = f"Detail {col.upper()} {name} - {MODUL_LABEL[mod]['label']}"
-                img_files = create_table_image(display_df, title, last_update=last_update, max_rows_per_page=100)
+                if 'am' in opt:
+                    display_cols = {
+                        'kode_toko': MASTER_COLS['kode_toko'],
+                        'nama_toko': MASTER_COLS['nama_toko'],
+                        'as': MASTER_COLS['as'],
+                        'type': MASTER_COLS['type_col'],
+                        'target': MASTER_COLS['target'],
+                        'realtime': MASTER_COLS['realtime'],
+                        'ach': MASTER_COLS['ach']
+                    }
+                    col_names = ['Kode Toko', 'Nama Toko', 'AS', 'Type Modul', 'Target', 'Realtime', 'Selisih (+/-)', 'ACH']
+                else:
+                    display_cols = {
+                        'kode_toko': MASTER_COLS['kode_toko'],
+                        'nama_toko': MASTER_COLS['nama_toko'],
+                        'am': MASTER_COLS['am'],
+                        'type': MASTER_COLS['type_col'],
+                        'target': MASTER_COLS['target'],
+                        'realtime': MASTER_COLS['realtime'],
+                        'ach': MASTER_COLS['ach']
+                    }
+                    col_names = ['Kode Toko', 'Nama Toko', 'AM', 'Type Modul', 'Target', 'Realtime', 'Selisih (+/-)', 'ACH']
+
+                detail_df = group[list(display_cols.values())].copy()
+                detail_df.columns = col_names
+
+                detail_df['Target'] = pd.to_numeric(detail_df['Target'], errors='coerce').fillna(0)
+                detail_df['Realtime'] = pd.to_numeric(detail_df['Realtime'], errors='coerce').fillna(0)
+                detail_df['Selisih (+/-)'] = detail_df['Realtime'] - detail_df['Target']
+                detail_df['ACH'] = pd.to_numeric(detail_df['ACH'], errors='coerce').fillna(0)
+
+                total_target = detail_df['Target'].sum()
+                total_realtime = detail_df['Realtime'].sum()
+                ach_total = (total_realtime / total_target * 100) if total_target > 0 else 0
+                summary = {
+                    'total_target': total_target,
+                    'total_realtime': total_realtime,
+                    'ach_total': ach_total
+                }
+
+                detail_df['Target'] = detail_df['Target'].apply(lambda x: f"{x:.0f}")
+                detail_df['Realtime'] = detail_df['Realtime'].apply(lambda x: f"{x:.0f}")
+                detail_df['Selisih (+/-)'] = detail_df['Selisih (+/-)'].apply(lambda x: f"{x:+.0f}")
+                detail_df['ACH'] = detail_df['ACH'].apply(lambda x: f"{x:.1f}%")
+
+                unit_type = 'AM' if 'am' in opt else 'AS'
+                title = f"REPORT AREA ({unit_type} {name}) - {MODUL_LABEL[mod]['label']}"
+
+                img_files = create_detail_jpeg(
+                    detail_df, title, last_update, summary,
+                    max_rows_per_page=80
+                )
                 if len(img_files) == 1:
                     await query.message.reply_photo(photo=open(img_files[0], 'rb'), caption=title[:1024])
                 else:
@@ -712,7 +838,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
 # -------------------------------------------------------------------
-# 8. Main
+# 9. Main
 # -------------------------------------------------------------------
 def main():
     os.makedirs("data/masters", exist_ok=True)
@@ -721,7 +847,6 @@ def main():
     request = HTTPXRequest(connect_timeout=30, read_timeout=60, write_timeout=60)
     app = Application.builder().token(TOKEN).request(request).build()
 
-    # conversation /start
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -731,7 +856,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    # conversation /upload_struktur_master
     conv_master = ConversationHandler(
         entry_points=[CommandHandler('upload_struktur_master', upload_master_start)],
         states={
