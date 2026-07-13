@@ -227,161 +227,15 @@ def df_summary(df, modul_name):
     return html
 
 # -------------------------------------------------------------------
-# 5. JPEG table image (HD, sangat rapat) – untuk Top/Bottom
-# -------------------------------------------------------------------
-def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_per_page=100):
-    n_rows = len(df)
-    files = []
-
-    df = df.reset_index(drop=True)
-    df.insert(0, 'No', range(1, len(df) + 1))
-
-    for page, start in enumerate(range(0, n_rows, max_rows_per_page)):
-        end = min(start + max_rows_per_page, n_rows)
-        page_df = df.iloc[start:end]
-        page_n_rows, page_n_cols = page_df.shape
-
-        if page_n_rows > 50:
-            font_size = 6.2
-            header_font_size = 6.8
-            scale_y = 0.9
-        elif page_n_rows > 25:
-            font_size = 7.5
-            header_font_size = 8.0
-            scale_y = 1.0
-        elif page_n_rows > 15:
-            font_size = 8.5
-            header_font_size = 9.0
-            scale_y = 1.1
-        else:
-            font_size = 9.5
-            header_font_size = 10.0
-            scale_y = 1.2
-
-        col_widths = []
-        for col in page_df.columns:
-            max_len = max(
-                len(str(col)),
-                page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0
-            )
-            col_widths.append(min(max_len, 15))
-        total_width = sum(col_widths) * 0.12 + 1.0
-        fig_width = max(9, min(total_width, 16))
-
-        fig_height = max(3.0, page_n_rows * 0.28 + 2.0)
-
-        fig = plt.figure(figsize=(fig_width, fig_height), facecolor='white')
-        ax = fig.add_subplot(111)
-        ax.axis('off')
-
-        title_lines = [title]
-        if last_update:
-            title_lines.append(f"Last Update: {last_update}")
-        if n_rows > max_rows_per_page:
-            total_pages = (n_rows - 1) // max_rows_per_page + 1
-            title_lines.append(f"Hal {page+1}/{total_pages}")
-
-        y_title = 0.99
-        for i, line in enumerate(title_lines):
-            if i == 0:
-                ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
-                        fontsize=11, weight='bold', color='#1A3C5E')
-            else:
-                y_title -= 0.015
-                ax.text(0.5, y_title, line, transform=fig.transFigure, ha='center',
-                        fontsize=6.5, color='#5D6D7E', style='italic')
-
-        table = ax.table(
-            cellText=page_df.values,
-            colLabels=page_df.columns,
-            cellLoc='center',
-            loc='center',
-            bbox=[0.01, 0.18, 0.98, 0.77]
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(font_size)
-
-        header_color = '#1A3C5E'
-        for j in range(page_n_cols):
-            cell = table[0, j]
-            cell.set_facecolor(header_color)
-            cell.set_text_props(color='white', weight='bold', fontsize=header_font_size)
-            cell.set_edgecolor('#0F2A44')
-            cell.set_linewidth(0.4)
-            cell.set_height(0.04)
-
-        row_colors = ['#FFFFFF', '#F4F6F7']
-        highlight_green = '#E8F8F5'
-        highlight_red = '#FDEDEC'
-
-        realtime_col_idx = None
-        for j, col_name in enumerate(page_df.columns):
-            if 'REALTIME' in str(col_name).upper() and j > 0:
-                realtime_col_idx = j
-                break
-
-        for i in range(1, page_n_rows + 1):
-            is_top = is_bottom = False
-            if realtime_col_idx is not None and page_n_rows >= 5:
-                try:
-                    vals = []
-                    for idx in range(page_n_rows):
-                        try:
-                            v = str(page_df.iloc[idx, realtime_col_idx]).replace(',', '').replace('-', '')
-                            vals.append(float(v) if v != '' else 0)
-                        except:
-                            vals.append(0)
-                    sorted_idx = sorted(range(len(vals)), key=lambda x: vals[x], reverse=True)
-                    top3 = sorted_idx[:3]
-                    bottom3 = sorted_idx[-3:] if len(sorted_idx) >= 3 else []
-                    if (i-1) in top3 and vals[i-1] > 0:
-                        is_top = True
-                    if (i-1) in bottom3 and vals[i-1] > 0 and (i-1) not in top3:
-                        is_bottom = True
-                except:
-                    pass
-
-            for j in range(page_n_cols):
-                cell = table[i, j]
-                cell.set_edgecolor('#BDC3C7')
-                cell.set_linewidth(0.3)
-                if is_top:
-                    cell.set_facecolor(highlight_green)
-                elif is_bottom:
-                    cell.set_facecolor(highlight_red)
-                else:
-                    cell.set_facecolor(row_colors[(i-1) % 2])
-
-        fig.text(0.5, 0.12, f"Total: {page_n_rows} toko", ha='center', fontsize=6.5, color='#7F8C8D')
-
-        plt.tight_layout(rect=[0, 0.05, 1, 1.0], pad=0.05)
-        page_filename = f"{filename.replace('.jpg','')}_p{page+1}.jpg"
-        plt.savefig(page_filename, format='jpg', dpi=300, bbox_inches='tight',
-                    pad_inches=0.03, facecolor='white', edgecolor='none',
-                    pil_kwargs={'quality': 95, 'optimize': True})
-        plt.close()
-        files.append(page_filename)
-
-    return files
-
-# -------------------------------------------------------------------
-# 6. JPEG detail AM/AS dengan banner navy + ringkasan horizontal
+# 5. JPEG detail AM/AS dengan banner navy + ringkasan horizontal
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
-    """
-    Buat JPEG detail AM/AS:
-    - Banner navy solid di atas berisi judul + last update
-    - Baris ringkasan horizontal (satu baris)
-    - Tabel mengisi penuh area yang dihitung (bbox=[0,0,1,1])
-    - Font tabel tebal hitam
-    """
     n_rows = len(df)
     files = []
 
     df = df.reset_index(drop=True)
     df.insert(0, 'No', range(1, len(df) + 1))
 
-    # Bobot lebar kolom relatif
     default_weights = {
         'No': 0.5, 'Kode Toko': 0.9, 'Nama Toko': 3.0, 'AS': 0.6,
         'Type': 1.6, 'Target': 0.9, 'Realtime': 1.0, '+/-': 0.8, 'ACH': 0.8,
@@ -397,7 +251,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         page_df = df.iloc[start:end]
         page_n_rows = len(page_df)
 
-        # Ukuran font dinamis
         if page_n_rows > 50:
             font_size = 6.5
             header_font_size = 7.0
@@ -411,7 +264,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             font_size = 10.0
             header_font_size = 10.5
 
-        # Lebar figure
         col_widths_chars = []
         for col in page_df.columns:
             max_len = max(len(str(col)), page_df[col].astype(str).str.len().max() if len(page_df) > 0 else 0)
@@ -419,9 +271,8 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         total_char_width = sum(col_widths_chars) * 0.14 + 2.0
         fig_width = max(11, min(total_char_width, 22))
 
-        # ---------- UKURAN PRESISI ----------
         banner_height_in = 0.7
-        summary_height_in = 0.25        # cukup untuk satu baris
+        summary_height_in = 0.25
         table_row_height_in = 0.32
         top_pad_in = 0.0
         bottom_pad_in = 0.08
@@ -436,7 +287,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         banner_frac = banner_height_in / fig_height
         summary_frac = summary_height_in / fig_height
 
-        # ===== 1. BANNER NAVY SOLID =====
+        # Banner
         fig.add_artist(Rectangle(
             (0, 1 - banner_frac), 1, banner_frac,
             transform=fig.transFigure, facecolor='#1A3C5E', edgecolor='none', zorder=0
@@ -446,7 +297,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         fig.text(left_margin, 1 - banner_frac * 0.75, f"Last Update: {last_update}",
                   ha='left', va='center', fontsize=9, color='white')
 
-        # ===== 2. BARIS RINGKASAN HORIZONTAL =====
+        # Ringkasan horizontal
         summary_text = (
             f"Target: {summary['total_target']:.0f}    "
             f"Realtime: {summary['total_realtime']:.0f}    "
@@ -457,7 +308,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         fig.text(left_margin, summary_y, summary_text,
                   ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
 
-        # ===== 3. TABEL (mengisi penuh area yang dihitung) =====
+        # Tabel
         table_top = 1 - banner_frac - summary_frac - 0.02
         table_bottom = bottom_pad_in / fig_height * 0.4
         table_height = table_top - table_bottom
@@ -479,7 +330,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
 
         n_cols = len(page_df.columns)
 
-        # Header tabel: abu-abu terang, teks hitam tebal
         for j in range(n_cols):
             cell = table[0, j]
             cell.set_facecolor('#EAEAEA')
@@ -487,7 +337,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             cell.set_edgecolor('#B0B0B0')
             cell.set_linewidth(0.8)
 
-        # Baris data: selang-seling putih & biru muda, font tebal hitam
         row_colors = ['#FFFFFF', '#F0F4FA']
         for i in range(1, page_n_rows + 1):
             for j in range(n_cols):
@@ -497,7 +346,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
                 cell.set_linewidth(0.4)
                 cell.set_text_props(color='#000000', weight='bold')
 
-        # Garis tebal navy di bawah header
         for j in range(n_cols):
             table[0, j].set_edgecolor('#1A3C5E')
             table[0, j].set_linewidth(1.2)
@@ -512,7 +360,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
     return files
 
 # -------------------------------------------------------------------
-# 7. State & handlers
+# 6. State & handlers
 # -------------------------------------------------------------------
 WAITING_MASTER_FILE = 0
 WAITING_SOSIS = 1
@@ -685,7 +533,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # -------------------------------------------------------------------
-# 8. Inline keyboard handlers
+# 7. Inline keyboard handlers
 # -------------------------------------------------------------------
 async def modul_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -699,10 +547,8 @@ async def modul_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
         [InlineKeyboardButton("3. Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
          InlineKeyboardButton("4. Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
-        [InlineKeyboardButton("5. Top 5 Toko Atas by AM", callback_data="opt:top_am")],
-        [InlineKeyboardButton("6. Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
-        [InlineKeyboardButton("7. Top 5 Toko Atas by AS", callback_data="opt:top_as")],
-        [InlineKeyboardButton("8. Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
+        [InlineKeyboardButton("5. Top 10 Toko Teratas by AM", callback_data="opt:top10_am")],
+        [InlineKeyboardButton("6. Toko Tidak Ada Realtime per AM", callback_data="opt:no_realtime_am")],
         [InlineKeyboardButton("Kembali", callback_data="back_to_modul")],
     ]
     await query.edit_message_text(f"Opsi untuk {MODUL_LABEL[mod]['label']}:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -729,6 +575,7 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Sesi habis, silakan mulai ulang dengan /start.")
         return
 
+    # ---- Opsi 1-4: Detail AM/AS Excel & JPEG ----
     if opt in ['detail_am_excel', 'detail_as_excel', 'detail_am_jpeg', 'detail_as_jpeg']:
         merged = context.user_data.get(f'merged_{mod}')
         if merged is None:
@@ -779,8 +626,6 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 raw_df = group[list(display_cols.values())].copy()
                 raw_df.columns = list(display_cols.keys())
-
-                # Ganti SOSIS menjadi HOT SAUSAGE di kolom Type
                 raw_df['Type'] = raw_df['Type'].replace('SOSIS', 'HOT SAUSAGE')
 
                 target_num = pd.to_numeric(raw_df['Target'], errors='coerce').fillna(0)
@@ -808,10 +653,7 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 unit_type = 'AM' if 'am' in opt else 'AS'
                 title = f"REPORT AREA {unit_type} {name} - {MODUL_LABEL[mod]['label']}"
 
-                img_files = create_detail_jpeg(
-                    detail_df, title, last_update, summary,
-                    max_rows_per_page=80
-                )
+                img_files = create_detail_jpeg(detail_df, title, last_update, summary, max_rows_per_page=80)
                 if len(img_files) == 1:
                     await query.message.reply_photo(photo=open(img_files[0], 'rb'), caption=title[:1024])
                 else:
@@ -820,27 +662,30 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for f in img_files:
                     os.remove(f)
 
+        # Kembalikan keyboard
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
              InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
             [InlineKeyboardButton("3. Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
              InlineKeyboardButton("4. Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
-            [InlineKeyboardButton("5. Top 5 Toko Atas by AM", callback_data="opt:top_am")],
-            [InlineKeyboardButton("6. Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
-            [InlineKeyboardButton("7. Top 5 Toko Atas by AS", callback_data="opt:top_as")],
-            [InlineKeyboardButton("8. Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
+            [InlineKeyboardButton("5. Top 10 Toko Teratas by AM", callback_data="opt:top10_am")],
+            [InlineKeyboardButton("6. Toko Tidak Ada Realtime per AM", callback_data="opt:no_realtime_am")],
             [InlineKeyboardButton("Kembali", callback_data="back_to_modul")],
         ]
         await query.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif opt in ['top_am', 'bottom_am', 'top_as', 'bottom_as']:
+    # ---- Opsi 5 & 6: minta input AM ----
+    elif opt in ['top10_am', 'no_realtime_am']:
         context.user_data['selected_opt'] = opt
         context.user_data['awaiting_code'] = True
-        pesan = "Masukkan kode AM:" if 'am' in opt else "Masukkan kode AS:"
-        await query.edit_message_text(pesan)
+        await query.edit_message_text("Masukkan kode AM:")
+
     else:
         await query.edit_message_text("Opsi tidak dikenal.")
 
+# -------------------------------------------------------------------
+# 8. Handler penerima kode AM (untuk opsi 5 & 6)
+# -------------------------------------------------------------------
 async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('awaiting_code'):
         return
@@ -858,25 +703,73 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop('awaiting_code', None)
         return
 
-    col = MASTER_COLS['am'] if 'am' in opt else MASTER_COLS['as']
+    col = MASTER_COLS['am']
     if text not in merged[col].values:
-        await update.message.reply_text(f"Kode '{text}' tidak ditemukan. Coba lagi:")
+        await update.message.reply_text(f"Kode AM '{text}' tidak ditemukan. Coba lagi:")
         return
 
     filtered = merged[merged[col] == text]
-    ascending = 'bottom' in opt
-    n = TOP_N if 'top' in opt else BOTTOM_N
-    sorted_df = filtered.sort_values(by=MASTER_COLS['realtime'], ascending=ascending).head(n)
+    last_update = context.user_data.get(f'{mod}_last', '')
 
-    cols_show = [MASTER_COLS['kode_toko'], MASTER_COLS['nama_toko'], MASTER_COLS['am'], MASTER_COLS['as'], MASTER_COLS['realtime'], MASTER_COLS['ach']]
-    display_df = sorted_df[cols_show].copy()
-    display_df[MASTER_COLS['realtime']] = display_df[MASTER_COLS['realtime']].apply(lambda x: f"{x:.0f}" if pd.notna(x) else "-")
-    display_df[MASTER_COLS['ach']] = display_df[MASTER_COLS['ach']].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
+    if opt == 'top10_am':
+        # 10 toko dengan realtime tertinggi
+        sorted_df = filtered.sort_values(by=MASTER_COLS['realtime'], ascending=False).head(10)
+        title = f"Top 10 Toko - AM {text} - {MODUL_LABEL[mod]['label']}"
+    elif opt == 'no_realtime_am':
+        # Toko tanpa realtime
+        sorted_df = filtered[filtered[MASTER_COLS['realtime']].isna()]
+        title = f"Toko Tanpa Realtime - AM {text} - {MODUL_LABEL[mod]['label']}"
+    else:
+        await update.message.reply_text("Opsi tidak dikenal.")
+        context.user_data.pop('awaiting_code', None)
+        return
 
-    title = f"Top {n} {'Atas' if 'top' in opt else 'Bawah'} - {col.upper()} {text} ({MODUL_LABEL[mod]['label']})"
-    img_files = create_table_image(display_df, title, max_rows_per_page=25)
+    if sorted_df.empty:
+        await update.message.reply_text("Tidak ada data untuk ditampilkan.")
+        context.user_data.pop('awaiting_code', None)
+        return
+
+    # Gunakan kolom yang sama dengan Detail per AM
+    display_cols = {
+        'Kode Toko': MASTER_COLS['kode_toko'],
+        'Nama Toko': MASTER_COLS['nama_toko'],
+        'AS': MASTER_COLS['as'],
+        'Type': MASTER_COLS['type_col'],
+        'Target': MASTER_COLS['target'],
+        'Realtime': MASTER_COLS['realtime'],
+        'ACH': MASTER_COLS['ach']
+    }
+    col_order = ['Kode Toko', 'Nama Toko', 'AS', 'Type', 'Target', 'Realtime', '+/-', 'ACH']
+
+    raw_df = sorted_df[list(display_cols.values())].copy()
+    raw_df.columns = list(display_cols.keys())
+    raw_df['Type'] = raw_df['Type'].replace('SOSIS', 'HOT SAUSAGE')
+
+    target_num = pd.to_numeric(raw_df['Target'], errors='coerce').fillna(0)
+    realtime_num = pd.to_numeric(raw_df['Realtime'], errors='coerce').fillna(0)
+    ach_num = pd.to_numeric(raw_df['ACH'], errors='coerce').fillna(0)
+    selisih = realtime_num - target_num
+
+    raw_df['+/-'] = [f"{int(x)}" if x >= 0 else f"{int(x)}" for x in selisih]
+    raw_df['Target'] = [f"{x:.0f}" for x in target_num]
+    raw_df['Realtime'] = [f"{x:.0f}" for x in realtime_num]
+    raw_df['ACH'] = [f"{x:.1f}%" for x in ach_num]
+
+    detail_df = raw_df[col_order]
+
+    total_target = target_num.sum()
+    total_realtime = realtime_num.sum()
+    ach_total = (total_realtime / total_target * 100) if total_target > 0 else 0
+    summary = {
+        'total_target': total_target,
+        'total_realtime': total_realtime,
+        'ach_total': ach_total,
+        'jumlah_toko': len(detail_df)
+    }
+
+    img_files = create_detail_jpeg(detail_df, title, last_update, summary, max_rows_per_page=80)
     if len(img_files) == 1:
-        await update.message.reply_photo(photo=open(img_files[0], 'rb'))
+        await update.message.reply_photo(photo=open(img_files[0], 'rb'), caption=title[:1024])
     else:
         media = [InputMediaPhoto(open(f, 'rb')) for f in img_files]
         await update.message.reply_media_group(media=media)
@@ -889,10 +782,8 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
         [InlineKeyboardButton("3. Detail Per AS (Excel)", callback_data="opt:detail_as_excel"),
          InlineKeyboardButton("4. Detail Per AS (JPEG)", callback_data="opt:detail_as_jpeg")],
-        [InlineKeyboardButton("5. Top 5 Toko Atas by AM", callback_data="opt:top_am")],
-        [InlineKeyboardButton("6. Top 5 Toko Bawah by AM", callback_data="opt:bottom_am")],
-        [InlineKeyboardButton("7. Top 5 Toko Atas by AS", callback_data="opt:top_as")],
-        [InlineKeyboardButton("8. Top 5 Toko Bawah by AS", callback_data="opt:bottom_as")],
+        [InlineKeyboardButton("5. Top 10 Toko Teratas by AM", callback_data="opt:top10_am")],
+        [InlineKeyboardButton("6. Toko Tidak Ada Realtime per AM", callback_data="opt:no_realtime_am")],
         [InlineKeyboardButton("Kembali", callback_data="back_to_modul")],
     ]
     await update.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
