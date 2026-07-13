@@ -296,7 +296,7 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
             colLabels=page_df.columns,
             cellLoc='center',
             loc='center',
-            bbox=[0, 0, 1, 1]
+            bbox=[0.01, 0.18, 0.98, 0.77]
         )
         table.auto_set_font_size(False)
         table.set_fontsize(font_size)
@@ -365,11 +365,15 @@ def create_table_image(df, title, last_update="", filename='temp.jpg', max_rows_
     return files
 
 # -------------------------------------------------------------------
-# 6. JPEG detail AM/AS dengan banner navy + ringkasan kiri + tabel rapi
+# 6. JPEG detail AM/AS dengan banner navy + ringkasan horizontal
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     """
-    Buat JPEG detail AM/AS dengan ringkasan horizontal.
+    Buat JPEG detail AM/AS:
+    - Banner navy solid di atas berisi judul + last update
+    - Baris ringkasan horizontal (satu baris)
+    - Tabel mengisi penuh area yang dihitung (bbox=[0,0,1,1])
+    - Font tabel tebal hitam
     """
     n_rows = len(df)
     files = []
@@ -417,7 +421,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
 
         # ---------- UKURAN PRESISI ----------
         banner_height_in = 0.7
-        summary_height_in = 0.25        # lebih kecil, cukup satu baris
+        summary_height_in = 0.25        # cukup untuk satu baris
         table_row_height_in = 0.32
         top_pad_in = 0.0
         bottom_pad_in = 0.08
@@ -449,7 +453,6 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             f"ACH Total: {summary['ach_total']:.2f}%    "
             f"Jumlah Toko: {summary['jumlah_toko']}"
         )
-        # Posisi tepat di bawah banner
         summary_y = 1 - banner_frac - 0.01
         fig.text(left_margin, summary_y, summary_text,
                   ha='left', va='top', fontsize=9, weight='bold', color='#1A1A1A')
@@ -484,7 +487,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             cell.set_edgecolor('#B0B0B0')
             cell.set_linewidth(0.8)
 
-        # Baris data: selang-seling putih & biru muda
+        # Baris data: selang-seling putih & biru muda, font tebal hitam
         row_colors = ['#FFFFFF', '#F0F4FA']
         for i in range(1, page_n_rows + 1):
             for j in range(n_cols):
@@ -492,7 +495,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
                 cell.set_facecolor(row_colors[(i - 1) % 2])
                 cell.set_edgecolor('#D0D5DD')
                 cell.set_linewidth(0.4)
-                cell.set_text_props(color='#2C3E50')
+                cell.set_text_props(color='#000000', weight='bold')
 
         # Garis tebal navy di bawah header
         for j in range(n_cols):
@@ -507,6 +510,7 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
         files.append(page_filename)
 
     return files
+
 # -------------------------------------------------------------------
 # 7. State & handlers
 # -------------------------------------------------------------------
@@ -775,6 +779,9 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 raw_df = group[list(display_cols.values())].copy()
                 raw_df.columns = list(display_cols.keys())
+
+                # Ganti SOSIS menjadi HOT SAUSAGE di kolom Type
+                raw_df['Type'] = raw_df['Type'].replace('SOSIS', 'HOT SAUSAGE')
 
                 target_num = pd.to_numeric(raw_df['Target'], errors='coerce').fillna(0)
                 realtime_num = pd.to_numeric(raw_df['Realtime'], errors='coerce').fillna(0)
