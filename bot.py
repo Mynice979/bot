@@ -537,7 +537,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------------------------------------------
 async def modul_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception as e:
+        logging.warning(f"Gagal answer query di modul_selected: {e}")
     data = query.data
     mod = data.split(":")[1]
     context.user_data['selected_modul'] = mod
@@ -555,7 +558,10 @@ async def modul_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception as e:
+        logging.warning(f"Gagal answer query di option_selected: {e}")
     data = query.data
 
     if data == "back_to_modul":
@@ -691,21 +697,18 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             group = merged[merged[MASTER_COLS['am']] == am_code]
 
             if opt == 'top10_am':
-                # 10 toko realtime tertinggi (hanya yang memiliki realtime)
                 group = group[group[MASTER_COLS['realtime']].notna()]
                 if group.empty:
                     continue
                 sorted_group = group.sort_values(by=MASTER_COLS['realtime'], ascending=False).head(10)
                 title = f"Top 10 Toko - AM {am_code} - {MODUL_LABEL[mod]['label']}"
-            else:  # no_realtime_am
-                # toko yang realtime-nya kosong (NaN) ATAU 0
+            else:
                 group = group[(group[MASTER_COLS['realtime']].isna()) | (group[MASTER_COLS['realtime']] == 0)]
                 if group.empty:
                     continue
                 sorted_group = group
                 title = f"Toko Tanpa Realtime - AM {am_code} - {MODUL_LABEL[mod]['label']}"
 
-            # Gunakan kolom yang sama dengan Detail per AM
             display_cols = {
                 'Kode Toko': MASTER_COLS['kode_toko'],
                 'Nama Toko': MASTER_COLS['nama_toko'],
@@ -749,18 +752,15 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_groups.append(InputMediaPhoto(open(f, 'rb')))
 
         if media_groups:
-            # Kirim dalam grup 10 media per pesan (batas Telegram)
             for i in range(0, len(media_groups), 10):
                 chunk = media_groups[i:i+10]
                 await query.message.reply_media_group(media=chunk)
-            # Hapus file temporer
             for f in temp_files:
                 if os.path.exists(f):
                     os.remove(f)
         else:
             await query.edit_message_text("Tidak ada data untuk ditampilkan.")
 
-        # Kembalikan keyboard
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
              InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
@@ -812,7 +812,6 @@ def main():
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(modul_selected, pattern='^mod:'))
     app.add_handler(CallbackQueryHandler(option_selected, pattern='^opt:|^back_to_modul'))
-    # Tidak perlu receive_code lagi
     app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text(
         "/start - Mulai input data penjualan (Sosis & Ayam)\n"
         "/upload_struktur_master - Upload file master toko (.xlsx)\n"
