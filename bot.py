@@ -393,7 +393,7 @@ WAITING_SOSIS = 1
 WAITING_AYAM = 2
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective.chat.id
+    chat_id = update.message.chat_id
     master_path = f"data/masters/{chat_id}.pkl"
 
     if ('master' not in context.user_data or context.user_data['master'] is None) and os.path.exists(master_path):
@@ -435,7 +435,7 @@ async def receive_master_file(update: Update, context: ContextTypes.DEFAULT_TYPE
         df = load_master_excel(fb)
         context.user_data['master'] = df
 
-        chat_id = update.effective.chat.id
+        chat_id = update.message.chat_id
         os.makedirs("data/masters", exist_ok=True)
         master_path = f"data/masters/{chat_id}.pkl"
         with open(master_path, 'wb') as f:
