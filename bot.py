@@ -227,7 +227,7 @@ def df_summary(df, modul_name):
     return html
 
 # -------------------------------------------------------------------
-# 5. JPEG creation (optimized for slow connection)
+# 5. JPEG creation – kualitas seimbang (DPI 150, quality 80)
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     n_rows = len(df)
@@ -351,9 +351,9 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             table[0, j].set_linewidth(1.2)
 
         page_filename = f"{filename.replace('.jpg', '')}_p{page + 1}.jpg"
-        plt.savefig(page_filename, format='jpg', dpi=120,
+        plt.savefig(page_filename, format='jpg', dpi=150,           # <-- naikkan DPI
                     facecolor='white', edgecolor='none',
-                    pil_kwargs={'quality': 75, 'optimize': True})
+                    pil_kwargs={'quality': 80, 'optimize': True})   # <-- naikkan quality
         plt.close()
         files.append(page_filename)
 
@@ -427,7 +427,7 @@ async def receive_master_file(update: Update, context: ContextTypes.DEFAULT_TYPE
         df = load_master_excel(fb)
         context.user_data['master'] = df
 
-        chat_id = update.effective_chat.id
+        chat_id = update.effective.chat.id
         os.makedirs("data/masters", exist_ok=True)
         master_path = f"data/masters/{chat_id}.pkl"
         with open(master_path, 'wb') as f:
@@ -775,7 +775,8 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success = await send_file_safely(query.message.chat_id, context, file_path, caption=cap[:1024])
             if not success:
                 await query.message.reply_text(f"Gagal mengirim {os.path.basename(file_path)}.")
-            if (idx + 1) % 5 == 0 and idx < total_files - 1:
+            # Batch lebih kecil (3 file) sebelum jeda ekstra
+            if (idx + 1) % 3 == 0 and idx < total_files - 1:
                 await asyncio.sleep(5)
             elif idx < total_files - 1:
                 await asyncio.sleep(3)
