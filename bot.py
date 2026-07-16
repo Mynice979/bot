@@ -227,7 +227,7 @@ def df_summary(df, modul_name):
     return html
 
 # -------------------------------------------------------------------
-# 5. JPEG creation – kualitas seimbang (DPI 150, quality 80)
+# 5. JPEG creation – DPI 150, quality 80
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     n_rows = len(df)
@@ -351,26 +351,34 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             table[0, j].set_linewidth(1.2)
 
         page_filename = f"{filename.replace('.jpg', '')}_p{page + 1}.jpg"
-        plt.savefig(page_filename, format='jpg', dpi=150,           # <-- naikkan DPI
+        plt.savefig(page_filename, format='jpg', dpi=150,
                     facecolor='white', edgecolor='none',
-                    pil_kwargs={'quality': 80, 'optimize': True})   # <-- naikkan quality
+                    pil_kwargs={'quality': 80, 'optimize': True})
         plt.close()
         files.append(page_filename)
 
     return files
 
 # -------------------------------------------------------------------
-# 6. Safe send with exponential backoff (JPEG only)
+# 6. Safe send with BytesIO & proper cleanup
 # -------------------------------------------------------------------
 async def send_file_safely(chat_id, context, file_path, caption=None, max_retries=3):
-    """Kirim foto dengan exponential backoff."""
+    """Kirim foto dengan retry. File dibaca ke memori dulu agar tidak hilang."""
+    try:
+        with open(file_path, 'rb') as f:
+            file_data = io.BytesIO(f.read())
+    except Exception as e:
+        logging.error(f"Tidak bisa membaca file {file_path}: {e}")
+        return False
+
     for attempt in range(max_retries + 1):
         try:
-            await context.bot.send_photo(chat_id=chat_id, photo=open(file_path, 'rb'), caption=caption)
+            file_data.seek(0)
+            await context.bot.send_photo(chat_id=chat_id, photo=file_data, caption=caption)
             return True
         except Exception as e:
             if attempt < max_retries:
-                wait = 8 * (2 ** attempt)   # 8, 16, 32 detik
+                wait = 8 * (2 ** attempt)
                 logging.warning(f"Retry {attempt+1} kirim {file_path} setelah {wait}s: {e}")
                 await asyncio.sleep(wait)
             else:
@@ -385,7 +393,7 @@ WAITING_SOSIS = 1
 WAITING_AYAM = 2
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    chat_id = update.effective.chat.id
     master_path = f"data/masters/{chat_id}.pkl"
 
     if ('master' not in context.user_data or context.user_data['master'] is None) and os.path.exists(master_path):
@@ -623,7 +631,6 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             last_update = context.user_data.get(f'{mod}_last', '')
             for name, group in merged.groupby(col):
-                # Urutkan berdasarkan ACH descending
                 group_sorted = group.sort_values(by=MASTER_COLS['ach'], ascending=False)
                 if 'am' in opt:
                     display_cols = {
@@ -684,10 +691,10 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     success = await send_file_safely(query.message.chat_id, context, f, caption=cap[:1024])
                     if not success:
                         await query.message.reply_text(f"Gagal mengirim halaman {idx+1}.")
+                    if os.path.exists(f):
+                        os.remove(f)
                     if idx < len(img_files) - 1:
                         await asyncio.sleep(3)
-                for f in img_files:
-                    os.remove(f)
 
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
@@ -718,7 +725,6 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group = group[group[MASTER_COLS['realtime']].notna()]
                 if group.empty:
                     continue
-                # Urutkan berdasarkan ACH descending, ambil 10 teratas
                 sorted_group = group.sort_values(by=MASTER_COLS['ach'], ascending=False).head(10)
                 title = f"Top 10 Toko - AM {am_code} - {MODUL_LABEL[mod]['label']}"
             else:
@@ -775,12 +781,12 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success = await send_file_safely(query.message.chat_id, context, file_path, caption=cap[:1024])
             if not success:
                 await query.message.reply_text(f"Gagal mengirim {os.path.basename(file_path)}.")
-            # Batch lebih kecil (3 file) sebelum jeda ekstra
+            if os.path.exists(file_path):
+                os.remove(file_path)
             if (idx + 1) % 3 == 0 and idx < total_files - 1:
                 await asyncio.sleep(5)
             elif idx < total_files - 1:
                 await asyncio.sleep(3)
-            os.remove(file_path)
 
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
