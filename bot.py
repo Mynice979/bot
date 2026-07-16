@@ -4,6 +4,7 @@ import re
 import pickle
 import logging
 import asyncio
+import uuid
 from io import BytesIO
 
 import pandas as pd
@@ -685,7 +686,8 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 unit_type = 'AM' if 'am' in opt else 'AS'
                 title = f"REPORT AREA {unit_type} {name} - {MODUL_LABEL[mod]['label']}"
 
-                img_files = create_detail_jpeg(detail_df, title, last_update, summary, max_rows_per_page=80)
+                unique_name = f"detail_{uuid.uuid4().hex}.jpg"
+                img_files = create_detail_jpeg(detail_df, title, last_update, summary, filename=unique_name, max_rows_per_page=80)
                 for idx, f in enumerate(img_files):
                     cap = f"{title} ({idx+1}/{len(img_files)})" if len(img_files) > 1 else title
                     success = await send_file_safely(query.message.chat_id, context, f, caption=cap[:1024])
@@ -771,7 +773,8 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'jumlah_toko': len(detail_df)
             }
 
-            img_files = create_detail_jpeg(detail_df, title, last_update, summary, max_rows_per_page=80)
+            unique_name = f"top_{uuid.uuid4().hex}.jpg"
+            img_files = create_detail_jpeg(detail_df, title, last_update, summary, filename=unique_name, max_rows_per_page=80)
             for f in img_files:
                 temp_files.append((f, title))
 
