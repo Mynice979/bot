@@ -3,6 +3,7 @@ import os
 import re
 import pickle
 import logging
+import asyncio
 from io import BytesIO
 
 import pandas as pd
@@ -47,7 +48,6 @@ BOTTOM_N = config["ui"]["bottom_n"]
 # 2. Helper functions
 # -------------------------------------------------------------------
 def load_master_excel(file_bytes: bytes) -> pd.DataFrame:
-    """Baca file master Excel, cari sheet yang mengandung kolom 'Kode Toko'."""
     xls = pd.ExcelFile(io.BytesIO(file_bytes))
     sheet_names = xls.sheet_names
 
@@ -227,7 +227,7 @@ def df_summary(df, modul_name):
     return html
 
 # -------------------------------------------------------------------
-# 5. JPEG detail (banner navy, ringkasan horizontal, tabel presisi)
+# 5. JPEG creation (optimized for slow connection)
 # -------------------------------------------------------------------
 def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max_rows_per_page=80):
     n_rows = len(df)
@@ -351,16 +351,34 @@ def create_detail_jpeg(df, title, last_update, summary, filename='temp.jpg', max
             table[0, j].set_linewidth(1.2)
 
         page_filename = f"{filename.replace('.jpg', '')}_p{page + 1}.jpg"
-        plt.savefig(page_filename, format='jpg', dpi=300,
+        plt.savefig(page_filename, format='jpg', dpi=120,
                     facecolor='white', edgecolor='none',
-                    pil_kwargs={'quality': 95, 'optimize': True})
+                    pil_kwargs={'quality': 75, 'optimize': True})
         plt.close()
         files.append(page_filename)
 
     return files
 
 # -------------------------------------------------------------------
-# 6. State & handlers
+# 6. Safe send with exponential backoff (JPEG only)
+# -------------------------------------------------------------------
+async def send_file_safely(chat_id, context, file_path, caption=None, max_retries=3):
+    """Kirim foto dengan exponential backoff."""
+    for attempt in range(max_retries + 1):
+        try:
+            await context.bot.send_photo(chat_id=chat_id, photo=open(file_path, 'rb'), caption=caption)
+            return True
+        except Exception as e:
+            if attempt < max_retries:
+                wait = 8 * (2 ** attempt)   # 8, 16, 32 detik
+                logging.warning(f"Retry {attempt+1} kirim {file_path} setelah {wait}s: {e}")
+                await asyncio.sleep(wait)
+            else:
+                logging.error(f"Gagal total kirim {file_path}: {e}")
+                return False
+
+# -------------------------------------------------------------------
+# 7. State & handlers
 # -------------------------------------------------------------------
 WAITING_MASTER_FILE = 0
 WAITING_SOSIS = 1
@@ -533,7 +551,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # -------------------------------------------------------------------
-# 7. Inline keyboard handlers
+# 8. Inline keyboard handlers
 # -------------------------------------------------------------------
 async def modul_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -581,16 +599,15 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Sesi habis, silakan mulai ulang dengan /start.")
         return
 
-    # ---- Opsi 1-4: Detail AM/AS Excel & JPEG ----
     if opt in ['detail_am_excel', 'detail_as_excel', 'detail_am_jpeg', 'detail_as_jpeg']:
         merged = context.user_data.get(f'merged_{mod}')
         if merged is None:
             await query.edit_message_text("Data tidak tersedia.")
             return
         col = MASTER_COLS['am'] if 'am' in opt else MASTER_COLS['as']
-        sorted_df = merged.sort_values(by=MASTER_COLS['realtime'], ascending=False)
 
         if 'excel' in opt:
+            sorted_df = merged.sort_values(by=MASTER_COLS['realtime'], ascending=False)
             filename = f"{mod}_detail_{col}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx"
             bio = BytesIO()
             with pd.ExcelWriter(bio, engine='openpyxl') as writer:
@@ -605,7 +622,9 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_document(document=bio, filename=filename, caption=f"Detail per {col.upper()} - {MODUL_LABEL[mod]['label']} (Excel)")
         else:
             last_update = context.user_data.get(f'{mod}_last', '')
-            for name, group in sorted_df.groupby(col):
+            for name, group in merged.groupby(col):
+                # Urutkan berdasarkan ACH descending
+                group_sorted = group.sort_values(by=MASTER_COLS['ach'], ascending=False)
                 if 'am' in opt:
                     display_cols = {
                         'Kode Toko': MASTER_COLS['kode_toko'],
@@ -630,7 +649,7 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     }
                     col_order = ['Kode Toko', 'Nama Toko', 'AM', 'AS', 'Type', 'Target', 'Realtime', '+/-', 'ACH']
 
-                raw_df = group[list(display_cols.values())].copy()
+                raw_df = group_sorted[list(display_cols.values())].copy()
                 raw_df.columns = list(display_cols.keys())
                 raw_df['Type'] = raw_df['Type'].replace('SOSIS', 'HOT SAUSAGE')
 
@@ -660,15 +679,16 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 title = f"REPORT AREA {unit_type} {name} - {MODUL_LABEL[mod]['label']}"
 
                 img_files = create_detail_jpeg(detail_df, title, last_update, summary, max_rows_per_page=80)
-                if len(img_files) == 1:
-                    await query.message.reply_photo(photo=open(img_files[0], 'rb'), caption=title[:1024])
-                else:
-                    media = [InputMediaPhoto(open(f, 'rb')) for f in img_files]
-                    await query.message.reply_media_group(media=media)
+                for idx, f in enumerate(img_files):
+                    cap = f"{title} ({idx+1}/{len(img_files)})" if len(img_files) > 1 else title
+                    success = await send_file_safely(query.message.chat_id, context, f, caption=cap[:1024])
+                    if not success:
+                        await query.message.reply_text(f"Gagal mengirim halaman {idx+1}.")
+                    if idx < len(img_files) - 1:
+                        await asyncio.sleep(3)
                 for f in img_files:
                     os.remove(f)
 
-        # Kembalikan keyboard
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
              InlineKeyboardButton("2. Detail Per AM (JPEG)", callback_data="opt:detail_am_jpeg")],
@@ -680,7 +700,6 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.message.reply_text("Pilih opsi lain:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # ---- Opsi 5 & 6: langsung proses semua AM ----
     elif opt in ['top10_am', 'no_realtime_am']:
         merged = context.user_data.get(f'merged_{mod}')
         if merged is None:
@@ -690,7 +709,6 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_update = context.user_data.get(f'{mod}_last', '')
         am_list = merged[MASTER_COLS['am']].unique()
 
-        media_groups = []
         temp_files = []
 
         for am_code in am_list:
@@ -700,7 +718,8 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group = group[group[MASTER_COLS['realtime']].notna()]
                 if group.empty:
                     continue
-                sorted_group = group.sort_values(by=MASTER_COLS['realtime'], ascending=False).head(10)
+                # Urutkan berdasarkan ACH descending, ambil 10 teratas
+                sorted_group = group.sort_values(by=MASTER_COLS['ach'], ascending=False).head(10)
                 title = f"Top 10 Toko - AM {am_code} - {MODUL_LABEL[mod]['label']}"
             else:
                 group = group[(group[MASTER_COLS['realtime']].isna()) | (group[MASTER_COLS['realtime']] == 0)]
@@ -748,18 +767,19 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             img_files = create_detail_jpeg(detail_df, title, last_update, summary, max_rows_per_page=80)
             for f in img_files:
-                temp_files.append(f)
-                media_groups.append(InputMediaPhoto(open(f, 'rb')))
+                temp_files.append((f, title))
 
-        if media_groups:
-            for i in range(0, len(media_groups), 10):
-                chunk = media_groups[i:i+10]
-                await query.message.reply_media_group(media=chunk)
-            for f in temp_files:
-                if os.path.exists(f):
-                    os.remove(f)
-        else:
-            await query.edit_message_text("Tidak ada data untuk ditampilkan.")
+        total_files = len(temp_files)
+        for idx, (file_path, title) in enumerate(temp_files):
+            cap = f"{title} ({idx+1}/{total_files})" if total_files > 1 else title
+            success = await send_file_safely(query.message.chat_id, context, file_path, caption=cap[:1024])
+            if not success:
+                await query.message.reply_text(f"Gagal mengirim {os.path.basename(file_path)}.")
+            if (idx + 1) % 5 == 0 and idx < total_files - 1:
+                await asyncio.sleep(5)
+            elif idx < total_files - 1:
+                await asyncio.sleep(3)
+            os.remove(file_path)
 
         keyboard = [
             [InlineKeyboardButton("1. Detail Per AM (Excel)", callback_data="opt:detail_am_excel"),
@@ -776,19 +796,19 @@ async def option_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Opsi tidak dikenal.")
 
 # -------------------------------------------------------------------
-# 8. Error handler
+# 9. Error handler
 # -------------------------------------------------------------------
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
 # -------------------------------------------------------------------
-# 9. Main
+# 10. Main
 # -------------------------------------------------------------------
 def main():
     os.makedirs("data/masters", exist_ok=True)
     logging.basicConfig(level=logging.INFO)
 
-    request = HTTPXRequest(connect_timeout=30, read_timeout=60, write_timeout=60)
+    request = HTTPXRequest(connect_timeout=30, read_timeout=180, write_timeout=180)
     app = Application.builder().token(TOKEN).request(request).build()
 
     conv = ConversationHandler(
